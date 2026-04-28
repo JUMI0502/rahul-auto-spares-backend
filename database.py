@@ -8,13 +8,16 @@ DATABASE_URL = os.environ.get(
     "postgresql://aminim@localhost/rahul_auto_spares"
 )
 
-# Fix for SQLAlchemy compatibility
+# Fix postgres:// to postgresql://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace(
         "postgres://", "postgresql://", 1
     )
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"sslmode": "require"}
+)
 
 SessionLocal = sessionmaker(
     autocommit=False,
