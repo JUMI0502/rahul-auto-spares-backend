@@ -86,3 +86,78 @@ def get_staff(db: Session = Depends(get_db)):
         "store": "New Rahul Auto Spares",
         "team": staff
     }
+@app.post("/orders")
+def create_order(order: dict, db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        INSERT INTO orders 
+        (status, pickup_time, total_amount, created_at)
+        VALUES 
+        (:status, :pickup_time, :total_amount, NOW())
+        RETURNING id
+    """), {
+        "status": "new",
+        "pickup_time": order.get("pickup_time"),
+        "total_amount": order.get("total_amount")
+    })
+    order_id = result.fetchone()[0]
+    
+    for item in order.get("items", []):
+        db.execute(text("""
+            INSERT INTO order_items 
+            (order_id, product_id, qty, price)
+            VALUES (:order_id, :product_id, :qty, :price)
+        """), {
+            "order_id": order_id,
+            "product_id": item["id"],
+            "qty": item["qty"],
+            "price": item["selling_price"]
+        })
+    
+    db.commit()
+    return {"order_id": order_id, "status": "created"}
+
+@app.get("/orders")
+def get_orders(db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT 
+            o.id,
+            o.status,
+            o.pickup_time,
+            o.total_amount,
+            o.payment_type,
+            o.created_at,
+            COUNT(oi.id) as item_count
+        FROM orders o
+        LEFT JOIN order_items oi ON o.id = oi.order_id
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+        LIMIT 50
+    """))
+    orders = []
+    for row in result:
+        orders.append({
+            "id": row[0],
+            "status": row[1],
+            "pickup_time": row[2],
+            "total_amount": float(row[3]) if row[3] else 0,
+            "payment_type": row[4],
+            "created_at": str(row[5]),
+            "item_count": row[6]
+        })
+    return {"orders": orders}
+
+@app.put("/orders/{order_id}")
+def update_order(order_id: int, update: dict, db: Session = Depends(get_db)):
+    db.execute(text("""
+        UPDATE orders 
+        SET status = :status,
+            payment_type = :payment_type,
+            payment_time = NOW()
+        WHERE id = :id
+    """), {
+        "status": update.get("status"),
+        "payment_type": update.get("payment_type"),
+        "id": order_id
+    })
+    db.commit()
+    return {"message": "Order updated successfully"}
