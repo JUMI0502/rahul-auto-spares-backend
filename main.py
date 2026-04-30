@@ -126,6 +126,7 @@ def get_orders(db: Session = Depends(get_db)):
             o.total_amount,
             o.payment_type,
             o.created_at,
+            o.collected_by,
             COUNT(oi.id) as item_count
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
@@ -142,7 +143,8 @@ def get_orders(db: Session = Depends(get_db)):
             "total_amount": float(row[3]) if row[3] else 0,
             "payment_type": row[4],
             "created_at": str(row[5]),
-            "item_count": row[6]
+            "collected_by": row[6],
+            "item_count": row[7]
         })
     return {"orders": orders}
 
@@ -152,11 +154,13 @@ def update_order(order_id: int, update: dict, db: Session = Depends(get_db)):
         UPDATE orders 
         SET status = :status,
             payment_type = :payment_type,
-            payment_time = NOW()
+            payment_time = NOW(),
+            collected_by = :collected_by
         WHERE id = :id
     """), {
         "status": update.get("status"),
         "payment_type": update.get("payment_type"),
+        "collected_by": update.get("staff_id"),
         "id": order_id
     })
     db.commit()
