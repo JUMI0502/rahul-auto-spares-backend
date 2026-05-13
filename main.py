@@ -170,3 +170,67 @@ def update_order(order_id: int, update: dict,
     })
     db.commit()
     return {"message": "Order updated successfully"}
+@app.get("/orders/customer/{phone}")
+def get_customer_orders(phone: str, db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT 
+            o.id,
+            o.custom_id,
+            o.status,
+            o.pickup_time,
+            o.total_amount,
+            o.payment_type,
+            o.created_at,
+            COUNT(oi.id) as item_count
+        FROM orders o
+        LEFT JOIN order_items oi ON o.id = oi.order_id
+        WHERE o.customer_phone = :phone
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+        LIMIT 20
+    """), {"phone": phone})
+    
+    orders = []
+    for row in result:
+        orders.append({
+            "id": row[0],
+            "custom_id": row[1] or f"RAS-{row[0]}",
+            "status": row[2],
+            "pickup_time": row[3],
+            "total_amount": float(row[4]) if row[4] else 0,
+            "payment_type": row[5],
+            "created_at": str(row[6]),
+            "item_count": row[7]
+        })
+    return {"orders": orders, "total": len(orders)}
+
+@app.get("/orders/{order_id}/items")
+def get_order_items(order_id: int, db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT 
+            p.id,
+            p.sku,
+            p.name_en,
+            p.name_te,
+            p.name_hi,
+            oi.qty,
+            oi.price,
+            p.selling_price
+        FROM order_items oi
+        JOIN products p ON oi.product_id = p.id
+        WHERE oi.order_id = :order_id
+    """), {"order_id": order_id})
+    
+    items = []
+    for row in result:
+        items.append({
+            "id": row[0],
+            "sku": row[1],
+            "name_en": row[2],
+            "name_te": row[3],
+            "name_hi": row[4],
+            "qty": row[5],
+            "price": float(row[6]) if row[6] else 0,
+            "selling_price": float(row[7]) if row[7] else 0
+        })
+    return {"items": items}
