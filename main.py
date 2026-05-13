@@ -234,3 +234,19 @@ def get_order_items(order_id: int, db: Session = Depends(get_db)):
             "selling_price": float(row[7]) if row[7] else 0
         })
     return {"items": items}
+@app.put("/products/{product_id}/price")
+def update_price(product_id: int, update: dict,
+                 db: Session = Depends(get_db)):
+    db.execute(text("""
+        UPDATE products
+        SET selling_price = :selling_price,
+            price_updated_by = :staff_id,
+            price_updated_at = NOW()
+        WHERE id = :id
+    """), {
+        "selling_price": update.get("selling_price"),
+        "staff_id": update.get("staff_id"),
+        "id": product_id
+    })
+    db.commit()
+    return {"message": "Price updated successfully"}
