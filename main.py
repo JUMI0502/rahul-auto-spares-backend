@@ -250,3 +250,136 @@ def update_price(product_id: int, update: dict,
     })
     db.commit()
     return {"message": "Price updated successfully"}
+# ═══ STAFF PROFILE ENDPOINTS ═══
+
+@app.get("/staff/{staff_id}/profile")
+def get_staff_profile(staff_id: int,
+                      db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT id, name, role, pin, phone,
+               photo_url, is_clocked_in,
+               clock_in_time, clock_out_time,
+               total_hours_today
+        FROM staff_profiles WHERE id = :id
+    """), {"id": staff_id}).fetchone()
+
+    if not result:
+        return {"error": "Staff not found"}
+
+    return {
+        "id": result[0],
+        "name": result[1],
+        "role": result[2],
+        "pin": result[3],
+        "phone": result[4],
+        "photo_url": result[5],
+        "is_clocked_in": result[6],
+        "clock_in_time": str(result[7]) if result[7] else None,
+        "clock_out_time": str(result[8]) if result[8] else None,
+        "total_hours_today": float(result[9]) if result[9] else 0
+    }
+
+@app.put("/staff/{staff_id}/profile")
+def update_staff_profile(staff_id: int,
+                         update: dict,
+                         db: Session = Depends(get_db)):
+    db.execute(text("""
+        UPDATE staff_profiles
+        SET name = COALESCE(:name, name),
+            phone = COALESCE(:phone, phone),
+            photo_url = COALESCE(:photo_url, photo_url)
+        WHERE id = :id
+    """), {
+        "name": update.get("name"),
+        "phone": update.get("phone"),
+        "photo_url": update.get("photo_url"),
+        "id": staff_id
+    })
+    db.commit()
+    return {"message": "Profile updated!"}
+
+@app.post("/staff/{staff_id}/clockin")
+def clock_in(staff_id: int, db: Session = Depends(get_db)):
+    # Check already clocked in
+    result = db.execute(text("""
+        SELECT is_clocked_in FROM staff_profiles
+        WHERE id = :id
+    """), {"id": staff_id}).fetchone()
+
+    if result and result[0]:
+        return {"error": "Already clocked in!"}
+
+    now = "NOW()"
+    db.execute(text("""
+        UPDATE staff_profiles
+        SET is_clocked_in = TRUE,
+            clock_in_time = NOW(),
+            clock_out_time = NULL
+        WHERE id = :id
+    """), {"id": staff_id})
+
+    db.execute(text("""
+        INSERT INTO attendance_log
+        (staff_id, clock_in, date)
+        VALUES (:staff_id, NOW(), CURRENT_DATE)
+    """), {"staff_id": staff_id})
+
+    db.commit()
+    return {"message": "Clocked in successfully!",
+            "clock_in_time": "NOW()"}
+
+@app.post("/staff/{staff_id}/clockout")
+def clock_out(staff_id: int, db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT is_clocked_in, clock_in_time
+        FROM staff_profiles WHERE id = :id
+    """), {"id": staff_id}).fetchone()
+
+    if not result or not result[0]:
+        return {"error": "Not clocked in!"}
+
+    db.execute(text("""
+        UPDATE staff_profiles
+        SET is_clocked_in = FALSE,
+            clock_out_time = NOW(),
+            total_hours_today = EXTRACT(
+              EPOCH FROM (NOW() - clock_in_time)
+            ) / 3600
+        WHERE id = :id
+    """), {"id": staff_id})
+
+    db.execute(text("""
+        UPDATE attendance_log
+        SET clock_out = NOW(),
+            hours_worked = EXTRACT(
+              EPOCH FROM (NOW() - clock_in)
+            ) / 3600
+        WHERE staff_id = :staff_id
+        AND clock_out IS NULL
+        ORDER BY id DESC LIMIT 1
+    """), {"staff_id": staff_id})
+
+    db.commit()
+    return {"message": "Clocked out successfully!"}
+
+@app.get("/staff/{staff_id}/attendance")
+def get_attendance(staff_id: int,
+                   db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT date, clock_in, clock_out,
+               hours_worked
+        FROM attendance_log
+        WHERE staff_id = :staff_id
+        ORDER BY date DESC
+        LIMIT 30
+    """), {"staff_id": staff_id})
+
+    logs = []
+    for row in result:
+        logs.append({
+            "date": str(row[0]),
+            "clock_in": str(row[1]) if row[1] else None,
+            "clock_out": str(row[2]) if row[2] else None,
+            "hours_worked": float(row[3]) if row[3] else 0
+        })
+    return {"logs": logs}
