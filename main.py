@@ -383,3 +383,206 @@ def get_attendance(staff_id: int,
             "hours_worked": float(row[3]) if row[3] else 0
         })
     return {"logs": logs}
+import requests as http_requests
+
+# ═══ REPORTS ═══
+
+@app.get("/reports/summary")
+def get_reports_summary(
+  period: str = "daily",
+  db: Session = Depends(get_db)
+):
+    if period == "daily":
+        date_filter = "DATE(created_at) = CURRENT_DATE"
+    elif period == "weekly":
+        date_filter = "created_at >= NOW() - INTERVAL '7 days'"
+    else:
+        date_filter = "created_at >= NOW() - INTERVAL '30 days'"
+
+    result = db.execute(text(f"""
+        SELECT
+            COUNT(*) as total_orders,
+            COALESCE(SUM(total_amount), 0) as total_revenue,
+            COALESCE(SUM(CASE WHEN payment_type='cash'
+              THEN total_amount ELSE 0 END), 0) as cash_revenue,
+            COALESCE(SUM(CASE WHEN payment_type='upi'
+              THEN total_amount ELSE 0 END), 0) as upi_revenue,
+            COALESCE(SUM(CASE WHEN payment_type='pending'
+              THEN total_amount ELSE 0 END), 0) as pending_revenue,
+            COUNT(CASE WHEN status='collected' THEN 1 END)
+              as completed_orders
+        FROM orders
+        WHERE {date_filter}
+    """)).fetchone()
+
+    daily = db.execute(text("""
+        SELECT
+            DATE(created_at) as date,
+            COALESCE(SUM(total_amount), 0) as revenue,
+            COUNT(*) as orders
+        FROM orders
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+        AND status = 'collected'
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+    """))
+
+    daily_data = []
+    for row in daily:
+        daily_data.append({
+            "date": str(row[0]),
+            "revenue": float(row[1]),
+            "orders": row[2]
+        })
+
+    return {
+        "total_orders": result[0] or 0,
+        "total_revenue": float(result[1] or 0),
+        "cash_revenue": float(result[2] or 0),
+        "upi_revenue": float(result[3] or 0),
+        "pending_revenue": float(result[4] or 0),
+        "completed_orders": result[5] or 0,
+        "daily_data": daily_data
+    }
+
+@app.get("/reports/bestsellers")
+def get_bestsellers(db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT
+            p.id, p.name_en, p.name_te, p.sku,
+            p.selling_price,
+            COALESCE(SUM(oi.qty), 0) as total_sold,
+            COALESCE(SUM(oi.qty * oi.price), 0) as total_revenue
+        FROM products p
+        LEFT JOIN order_items oi ON p.id = oi.product_id
+        LEFT JOIN orders o ON oi.order_id = o.id
+          AND o.status = 'collected'
+        GROUP BY p.id, p.name_en, p.name_te,
+                 p.sku, p.selling_price
+        ORDER BY total_sold DESC
+        LIMIT 10
+    """))
+
+    items = []
+    for row in result:
+        items.append({
+            "id": row[0],
+            "name_en": row[1],
+            "name_te": row[2],
+            "sku": row[3],
+            "selling_price": float(row[4]),
+            "total_sold": row[5],
+            "total_revenue": float(row[6])
+        })
+    return {"bestsellers": items}
+
+# ═══ STOCK MANAGEMENT ═══
+
+@app.put("/products/{product_id}/stock")
+def update_stock(
+  product_id: int,
+  update: dict,
+  db: Session = Depends(get_db)
+):
+    new_qty = update.get("stock_qty", 0)
+    staff_id = update.get("staff_id")
+
+    db.execute(text("""
+        UPDATE products SET stock_qty = :qty WHERE id = :id
+    """), {"qty": new_qty, "id": product_id})
+
+    try:
+        db.execute(text("""
+            INSERT INTO stock_movements
+            (product_id, qty_change, new_qty, staff_id, reason)
+            VALUES (:pid, :qc, :nq, :sid, 'manual_update')
+        """), {
+            "pid": product_id,
+            "qc": new_qty,
+            "nq": new_qty,
+            "sid": staff_id
+        })
+    except:
+        pass
+
+    db.commit()
+    return {"message": "Stock updated!", "new_qty": new_qty}
+
+@app.get("/products/low-stock")
+def get_low_stock(db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT id, name_en, name_te, sku,
+               stock_qty, selling_price
+        FROM products
+        WHERE stock_qty <= 5
+        ORDER BY stock_qty ASC
+    """))
+
+    items = []
+    for row in result:
+        items.append({
+            "id": row[0],
+            "name_en": row[1],
+            "name_te": row[2],
+            "sku": row[3],
+            "stock_qty": row[4],
+            "selling_price": float(row[5])
+        })
+    return {"low_stock": items, "count": len(items)}
+
+# ═══ PUSH NOTIFICATIONS ═══
+
+@app.post("/push-tokens")
+def save_push_token(
+  data: dict,
+  db: Session = Depends(get_db)
+):
+    token = data.get("token")
+    staff_id = data.get("staff_id")
+    if not token:
+        return {"error": "No token"}
+
+    db.execute(text("""
+        INSERT INTO push_tokens (staff_id, token, updated_at)
+        VALUES (:sid, :token, NOW())
+        ON CONFLICT (token) DO UPDATE
+        SET staff_id = :sid, updated_at = NOW()
+    """), {"sid": staff_id, "token": token})
+    db.commit()
+    return {"message": "Token saved!"}
+
+@app.post("/notify/new-order")
+def notify_new_order(
+  data: dict,
+  db: Session = Depends(get_db)
+):
+    customer_name = data.get("customer_name", "Customer")
+    total = data.get("total", 0)
+    pickup_time = data.get("pickup_time", "")
+    custom_id = data.get("custom_id", "")
+
+    result = db.execute(text(
+        "SELECT DISTINCT token FROM push_tokens WHERE token IS NOT NULL"
+    ))
+    tokens = [row[0] for row in result]
+    if not tokens:
+        return {"message": "No tokens"}
+
+    messages = [{
+        "to": token,
+        "title": f"🔔 New Order {custom_id}!",
+        "body": f"👤 {customer_name} • ₹{total} • 📅 {pickup_time}",
+        "sound": "default",
+        "badge": 1
+    } for token in tokens]
+
+    try:
+        resp = http_requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=messages,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        return {"message": f"Notified {len(tokens)} devices"}
+    except Exception as e:
+        return {"error": str(e)}
