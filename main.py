@@ -586,3 +586,52 @@ def notify_new_order(
         return {"message": f"Notified {len(tokens)} devices"}
     except Exception as e:
         return {"error": str(e)}
+    # ═══ CUSTOMER TOKENS ═══
+@app.post("/customer-tokens")
+def save_customer_token(
+  data: dict, db: Session = Depends(get_db)
+):
+    token = data.get("token")
+    phone = data.get("phone")
+    if not token or not phone:
+        return {"error": "Missing data"}
+    db.execute(text("""
+        INSERT INTO customer_tokens (phone, token, updated_at)
+        VALUES (:phone, :token, NOW())
+        ON CONFLICT (phone) DO UPDATE
+        SET token = :token, updated_at = NOW()
+    """), {"phone": phone, "token": token})
+    db.commit()
+    return {"message": "Token saved!"}
+
+@app.post("/notify/order-ready/{order_id}")
+def notify_order_ready(
+  order_id: int, db: Session = Depends(get_db)
+):
+    order = db.execute(text("""
+        SELECT customer_phone, custom_id, total_amount
+        FROM orders WHERE id = :id
+    """), {"id": order_id}).fetchone()
+    if not order:
+        return {"error": "Order not found"}
+    token_row = db.execute(text("""
+        SELECT token FROM customer_tokens
+        WHERE phone = :phone
+    """), {"phone": order[0]}).fetchone()
+    if not token_row:
+        return {"message": "No token"}
+    try:
+        http_requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json={
+                "to": token_row[0],
+                "title": "🎉 Order Ready! Come Pick Up!",
+                "body": f"Order {order[1] or f'RAS-{order_id}'} is ready! ₹{order[2]}",
+                "sound": "default", "badge": 1
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        return {"message": "Customer notified!"}
+    except Exception as e:
+        return {"error": str(e)}
