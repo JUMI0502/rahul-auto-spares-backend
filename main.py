@@ -1,9 +1,18 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from database import SessionLocal, engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, Session
 import os
+from dotenv import load_dotenv
+import requests as http_requests
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(
+    autocommit=False, autoflush=False, bind=engine
+)
 
 app = FastAPI()
 
@@ -22,244 +31,321 @@ def get_db():
     finally:
         db.close()
 
+# ════════════════════════════════════
+# HEALTH CHECK
+# ════════════════════════════════════
+
 @app.get("/")
 def root():
-    return {
-        "message": "New Rahul Auto Spares API is LIVE!",
-        "store": "New Rahul Auto Spares",
-        "location": "Telugu Peta, Nandyal, Andhra Pradesh",
-        "phone": "08514-244944",
-        "status": "open"
-    }
+    return {"message": "Rahul Auto Spares API Running!"}
+
+# ════════════════════════════════════
+# PRODUCTS
+# ════════════════════════════════════
 
 @app.get("/products")
 def get_products(db: Session = Depends(get_db)):
     result = db.execute(text("""
-        SELECT id, sku, name_en, name_te,
-               name_hi, price, mrp, selling_price, stock_qty
+        SELECT id, name_en, name_te, name_hi,
+               sku, mrp, selling_price,
+               stock_qty, category_id
         FROM products
-        ORDER BY id
+        ORDER BY sku ASC
     """))
     products = []
     for row in result:
         products.append({
             "id": row[0],
-            "sku": row[1],
-            "name_en": row[2],
-            "name_te": row[3],
-            "name_hi": row[4],
-            "price": float(row[5]) if row[5] else 0,
-            "mrp": float(row[6]) if row[6] else 0,
-            "selling_price": float(row[7]) if row[7] else 0,
-            "stock_qty": row[8]
+            "name_en": row[1],
+            "name_te": row[2],
+            "name_hi": row[3],
+            "sku": row[4],
+            "mrp": float(row[5] or 0),
+            "selling_price": float(row[6] or 0),
+            "stock_qty": row[7] or 0,
+            "category_id": row[8]
         })
-    return {"store": "New Rahul Auto Spares",
-            "total_products": len(products),
-            "products": products}
+    return {"products": products}
 
-@app.get("/brands")
-def get_brands(db: Session = Depends(get_db)):
-    result = db.execute(text("SELECT id, name FROM vehicle_brands"))
-    return {"brands": [{"id": r[0], "name": r[1]} for r in result]}
+# ── IMPORTANT: low-stock MUST come
+#    BEFORE /{product_id} ──
 
-@app.get("/staff")
-def get_staff(db: Session = Depends(get_db)):
-    result = db.execute(text(
-        "SELECT id, name, role FROM staff_profiles WHERE is_active=true"
-    ))
-    return {"staff": [{"id": r[0], "name": r[1], "role": r[2]}
-                      for r in result]}
-
-@app.post("/orders")
-def create_order(order: dict, db: Session = Depends(get_db)):
-    # Generate custom order ID like RAS-001
-    count_result = db.execute(text("SELECT COUNT(*) FROM orders"))
-    count = count_result.fetchone()[0]
-    custom_id = f"RAS-{str(count + 1).zfill(3)}"
-
+@app.get("/products/low-stock")
+def get_low_stock(db: Session = Depends(get_db)):
     result = db.execute(text("""
-        INSERT INTO orders
-        (custom_id, status, pickup_time, total_amount,
-         customer_name, customer_phone, created_at)
-        VALUES
-        (:custom_id, :status, :pickup_time, :total_amount,
-         :customer_name, :customer_phone, NOW())
-        RETURNING id
-    """), {
-        "custom_id": custom_id,
-        "status": "new",
-        "pickup_time": order.get("pickup_time"),
-        "total_amount": order.get("total_amount"),
-        "customer_name": order.get("customer_name", "Customer"),
-        "customer_phone": order.get("customer_phone", ""),
-    })
-    order_id = result.fetchone()[0]
-
-    for item in order.get("items", []):
-        db.execute(text("""
-            INSERT INTO order_items
-            (order_id, product_id, qty, price)
-            VALUES (:order_id, :product_id, :qty, :price)
-        """), {
-            "order_id": order_id,
-            "product_id": item["id"],
-            "qty": item["qty"],
-            "price": item["selling_price"]
+        SELECT id, name_en, name_te,
+               sku, stock_qty, selling_price
+        FROM products
+        WHERE stock_qty <= 5
+        ORDER BY stock_qty ASC
+    """))
+    items = []
+    for row in result:
+        items.append({
+            "id": row[0],
+            "name_en": row[1],
+            "name_te": row[2],
+            "sku": row[3],
+            "stock_qty": row[4],
+            "selling_price": float(row[5] or 0)
         })
+    return {"low_stock": items, "count": len(items)}
 
+@app.put("/products/{product_id}/price")
+def update_price(
+    product_id: int,
+    update: dict,
+    db: Session = Depends(get_db)
+):
+    new_price = update.get("selling_price", 0)
+    db.execute(text("""
+        UPDATE products
+        SET selling_price = :price
+        WHERE id = :id
+    """), {"price": new_price, "id": product_id})
     db.commit()
-    return {
-        "order_id": order_id,
-        "custom_id": custom_id,
-        "status": "created"
-    }
+    return {"message": "Price updated!", "new_price": new_price}
+
+@app.put("/products/{product_id}/stock")
+def update_stock(
+    product_id: int,
+    update: dict,
+    db: Session = Depends(get_db)
+):
+    new_qty = update.get("stock_qty", 0)
+    staff_id = update.get("staff_id")
+    db.execute(text("""
+        UPDATE products
+        SET stock_qty = :qty WHERE id = :id
+    """), {"qty": new_qty, "id": product_id})
+    try:
+        db.execute(text("""
+            INSERT INTO stock_movements
+            (product_id, qty_change, new_qty, staff_id, reason)
+            VALUES (:pid, :qc, :nq, :sid, 'manual_update')
+        """), {
+            "pid": product_id,
+            "qc": new_qty,
+            "nq": new_qty,
+            "sid": staff_id
+        })
+    except:
+        pass
+    db.commit()
+    return {"message": "Stock updated!", "new_qty": new_qty}
+
+# ════════════════════════════════════
+# ORDERS
+# ════════════════════════════════════
 
 @app.get("/orders")
 def get_orders(db: Session = Depends(get_db)):
     result = db.execute(text("""
         SELECT
-            o.id,
-            o.custom_id,
-            o.status,
-            o.pickup_time,
-            o.total_amount,
-            o.payment_type,
+            o.id, o.custom_id, o.status,
+            o.total_amount, o.pickup_time,
+            o.payment_type, o.collected_by,
+            o.customer_name, o.customer_phone,
             o.created_at,
-            o.collected_by,
-            o.customer_name,
-            o.customer_phone,
             COUNT(oi.id) as item_count
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         GROUP BY o.id
         ORDER BY o.created_at DESC
-        LIMIT 50
     """))
     orders = []
     for row in result:
         orders.append({
             "id": row[0],
-            "custom_id": row[1] or f"RAS-{row[0]}",
+            "custom_id": row[1],
             "status": row[2],
-            "pickup_time": row[3],
-            "total_amount": float(row[4]) if row[4] else 0,
+            "total_amount": float(row[3] or 0),
+            "pickup_time": row[4],
             "payment_type": row[5],
-            "created_at": str(row[6]),
-            "collected_by": row[7],
-            "customer_name": row[8] or "Customer",
-            "customer_phone": row[9] or "",
-            "item_count": row[10]
+            "collected_by": row[6],
+            "customer_name": row[7],
+            "customer_phone": row[8],
+            "created_at": str(row[9]),
+            "item_count": row[10] or 0
         })
     return {"orders": orders}
 
-@app.put("/orders/{order_id}")
-def update_order(order_id: int, update: dict,
-                 db: Session = Depends(get_db)):
-    db.execute(text("""
-        UPDATE orders
-        SET status = :status,
-            payment_type = :payment_type,
-            payment_time = NOW(),
-            collected_by = :collected_by
-        WHERE id = :id
-    """), {
-        "status": update.get("status"),
-        "payment_type": update.get("payment_type"),
-        "collected_by": update.get("staff_id"),
-        "id": order_id
-    })
-    db.commit()
-    return {"message": "Order updated successfully"}
 @app.get("/orders/customer/{phone}")
-def get_customer_orders(phone: str, db: Session = Depends(get_db)):
+def get_customer_orders(
+    phone: str,
+    db: Session = Depends(get_db)
+):
     result = db.execute(text("""
-        SELECT 
-            o.id,
-            o.custom_id,
-            o.status,
-            o.pickup_time,
-            o.total_amount,
-            o.payment_type,
-            o.created_at,
-            COUNT(oi.id) as item_count
-        FROM orders o
-        LEFT JOIN order_items oi ON o.id = oi.order_id
-        WHERE o.customer_phone = :phone
-        GROUP BY o.id
-        ORDER BY o.created_at DESC
+        SELECT id, custom_id, status,
+               total_amount, pickup_time,
+               payment_type, created_at
+        FROM orders
+        WHERE customer_phone = :phone
+        ORDER BY created_at DESC
         LIMIT 20
     """), {"phone": phone})
-    
     orders = []
     for row in result:
         orders.append({
             "id": row[0],
-            "custom_id": row[1] or f"RAS-{row[0]}",
+            "custom_id": row[1],
             "status": row[2],
-            "pickup_time": row[3],
-            "total_amount": float(row[4]) if row[4] else 0,
+            "total_amount": float(row[3] or 0),
+            "pickup_time": row[4],
             "payment_type": row[5],
-            "created_at": str(row[6]),
-            "item_count": row[7]
+            "created_at": str(row[6])
         })
-    return {"orders": orders, "total": len(orders)}
+    return {"orders": orders}
+
+@app.post("/orders")
+def create_order(
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    pickup_time = data.get("pickup_time", "")
+    total_amount = data.get("total_amount", 0)
+    customer_name = data.get("customer_name", "")
+    customer_phone = data.get("customer_phone", "")
+    items = data.get("items", [])
+
+    count = db.execute(
+        text("SELECT COUNT(*) FROM orders")
+    ).fetchone()[0]
+    custom_id = f"RAS-{(count + 1):03d}"
+
+    result = db.execute(text("""
+        INSERT INTO orders
+        (custom_id, status, total_amount, pickup_time,
+         customer_name, customer_phone, payment_type)
+        VALUES (:cid, 'new', :total, :pickup,
+                :cname, :cphone, 'pending')
+        RETURNING id
+    """), {
+        "cid": custom_id,
+        "total": total_amount,
+        "pickup": pickup_time,
+        "cname": customer_name,
+        "cphone": customer_phone
+    })
+    order_id = result.fetchone()[0]
+
+    for item in items:
+        price = item.get("mechanic_price") or \
+                item.get("selling_price", 0)
+        db.execute(text("""
+            INSERT INTO order_items
+            (order_id, product_id, qty, price)
+            VALUES (:oid, :pid, :qty, :price)
+        """), {
+            "oid": order_id,
+            "pid": item.get("id"),
+            "qty": item.get("qty", 1),
+            "price": price
+        })
+
+        db.execute(text("""
+            UPDATE products
+            SET stock_qty = GREATEST(0, stock_qty - :qty)
+            WHERE id = :pid
+        """), {
+            "qty": item.get("qty", 1),
+            "pid": item.get("id")
+        })
+
+    db.commit()
+    return {
+        "message": "Order created!",
+        "order_id": order_id,
+        "custom_id": custom_id
+    }
+
+@app.put("/orders/{order_id}")
+def update_order(
+    order_id: int,
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    status = data.get("status")
+    payment_type = data.get("payment_type")
+    staff_id = data.get("staff_id")
+
+    db.execute(text("""
+        UPDATE orders
+        SET status = :status,
+            payment_type = :payment_type,
+            collected_by = CASE
+                WHEN :status = 'collected'
+                THEN :staff_id
+                ELSE collected_by
+            END
+        WHERE id = :id
+    """), {
+        "status": status,
+        "payment_type": payment_type,
+        "staff_id": staff_id,
+        "id": order_id
+    })
+    db.commit()
+    return {"message": "Order updated!"}
 
 @app.get("/orders/{order_id}/items")
-def get_order_items(order_id: int, db: Session = Depends(get_db)):
+def get_order_items(
+    order_id: int,
+    db: Session = Depends(get_db)
+):
     result = db.execute(text("""
-        SELECT 
-            p.id,
-            p.sku,
-            p.name_en,
-            p.name_te,
-            p.name_hi,
-            oi.qty,
-            oi.price,
-            p.selling_price
+        SELECT
+            oi.id, oi.qty, oi.price,
+            p.name_en, p.name_te, p.sku
         FROM order_items oi
         JOIN products p ON oi.product_id = p.id
-        WHERE oi.order_id = :order_id
-    """), {"order_id": order_id})
-    
+        WHERE oi.order_id = :oid
+    """), {"oid": order_id})
     items = []
     for row in result:
         items.append({
             "id": row[0],
-            "sku": row[1],
-            "name_en": row[2],
-            "name_te": row[3],
-            "name_hi": row[4],
-            "qty": row[5],
-            "price": float(row[6]) if row[6] else 0,
-            "selling_price": float(row[7]) if row[7] else 0
+            "qty": row[1],
+            "price": float(row[2] or 0),
+            "name_en": row[3],
+            "name_te": row[4],
+            "sku": row[5]
         })
     return {"items": items}
-@app.put("/products/{product_id}/price")
-def update_price(product_id: int, update: dict,
-                 db: Session = Depends(get_db)):
-    db.execute(text("""
-        UPDATE products
-        SET selling_price = :selling_price,
-            price_updated_by = :staff_id,
-            price_updated_at = NOW()
-        WHERE id = :id
-    """), {
-        "selling_price": update.get("selling_price"),
-        "staff_id": update.get("staff_id"),
-        "id": product_id
-    })
-    db.commit()
-    return {"message": "Price updated successfully"}
-# ═══ STAFF PROFILE ENDPOINTS ═══
+
+# ════════════════════════════════════
+# STAFF
+# ════════════════════════════════════
+
+@app.get("/staff")
+def get_staff(db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        SELECT id, name, role, phone,
+               is_clocked_in, total_hours_today
+        FROM staff_profiles
+        ORDER BY id ASC
+    """))
+    staff = []
+    for row in result:
+        staff.append({
+            "id": row[0],
+            "name": row[1],
+            "role": row[2],
+            "phone": row[3],
+            "is_clocked_in": row[4],
+            "total_hours_today": float(row[5] or 0)
+        })
+    return {"staff": staff}
 
 @app.get("/staff/{staff_id}/profile")
-def get_staff_profile(staff_id: int,
-                      db: Session = Depends(get_db)):
+def get_staff_profile(
+    staff_id: int,
+    db: Session = Depends(get_db)
+):
     result = db.execute(text("""
-        SELECT id, name, role, pin, phone,
+        SELECT id, name, role, phone,
                photo_url, is_clocked_in,
-               clock_in_time, clock_out_time,
-               total_hours_today
+               clock_in_time, total_hours_today
         FROM staff_profiles WHERE id = :id
     """), {"id": staff_id}).fetchone()
 
@@ -270,127 +356,121 @@ def get_staff_profile(staff_id: int,
         "id": result[0],
         "name": result[1],
         "role": result[2],
-        "pin": result[3],
-        "phone": result[4],
-        "photo_url": result[5],
-        "is_clocked_in": result[6],
-        "clock_in_time": str(result[7]) if result[7] else None,
-        "clock_out_time": str(result[8]) if result[8] else None,
-        "total_hours_today": float(result[9]) if result[9] else 0
+        "phone": result[3],
+        "photo_url": result[4],
+        "is_clocked_in": result[5],
+        "clock_in_time": str(result[6]) if result[6] else None,
+        "total_hours_today": float(result[7] or 0)
     }
 
 @app.put("/staff/{staff_id}/profile")
-def update_staff_profile(staff_id: int,
-                         update: dict,
-                         db: Session = Depends(get_db)):
+def update_staff_profile(
+    staff_id: int,
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    phone = data.get("phone")
+    photo_url = data.get("photo_url")
     db.execute(text("""
         UPDATE staff_profiles
-        SET name = COALESCE(:name, name),
-            phone = COALESCE(:phone, phone),
+        SET phone = COALESCE(:phone, phone),
             photo_url = COALESCE(:photo_url, photo_url)
         WHERE id = :id
     """), {
-        "name": update.get("name"),
-        "phone": update.get("phone"),
-        "photo_url": update.get("photo_url"),
+        "phone": phone,
+        "photo_url": photo_url,
         "id": staff_id
     })
     db.commit()
     return {"message": "Profile updated!"}
 
 @app.post("/staff/{staff_id}/clockin")
-def clock_in(staff_id: int, db: Session = Depends(get_db)):
-    # Check already clocked in
-    result = db.execute(text("""
-        SELECT is_clocked_in FROM staff_profiles
-        WHERE id = :id
-    """), {"id": staff_id}).fetchone()
-
-    if result and result[0]:
-        return {"error": "Already clocked in!"}
-
-    now = "NOW()"
+def clock_in(
+    staff_id: int,
+    db: Session = Depends(get_db)
+):
     db.execute(text("""
         UPDATE staff_profiles
         SET is_clocked_in = TRUE,
-            clock_in_time = NOW(),
-            clock_out_time = NULL
+            clock_in_time = NOW()
         WHERE id = :id
     """), {"id": staff_id})
-
     db.execute(text("""
         INSERT INTO attendance_log
         (staff_id, clock_in, date)
-        VALUES (:staff_id, NOW(), CURRENT_DATE)
-    """), {"staff_id": staff_id})
-
+        VALUES (:sid, NOW(), CURRENT_DATE)
+    """), {"sid": staff_id})
     db.commit()
-    return {"message": "Clocked in successfully!",
-            "clock_in_time": "NOW()"}
+    return {"message": "Clocked in!"}
 
 @app.post("/staff/{staff_id}/clockout")
-def clock_out(staff_id: int, db: Session = Depends(get_db)):
+def clock_out(
+    staff_id: int,
+    db: Session = Depends(get_db)
+):
     result = db.execute(text("""
-        SELECT is_clocked_in, clock_in_time
-        FROM staff_profiles WHERE id = :id
+        SELECT clock_in_time FROM staff_profiles
+        WHERE id = :id
     """), {"id": staff_id}).fetchone()
 
-    if not result or not result[0]:
-        return {"error": "Not clocked in!"}
+    hours = 0
+    if result and result[0]:
+        from datetime import datetime
+        now = datetime.now()
+        diff = now - result[0].replace(tzinfo=None)
+        hours = round(diff.total_seconds() / 3600, 2)
 
     db.execute(text("""
         UPDATE staff_profiles
         SET is_clocked_in = FALSE,
             clock_out_time = NOW(),
-            total_hours_today = EXTRACT(
-              EPOCH FROM (NOW() - clock_in_time)
-            ) / 3600
+            total_hours_today = :hours
         WHERE id = :id
-    """), {"id": staff_id})
+    """), {"hours": hours, "id": staff_id})
 
     db.execute(text("""
         UPDATE attendance_log
         SET clock_out = NOW(),
-            hours_worked = EXTRACT(
-              EPOCH FROM (NOW() - clock_in)
-            ) / 3600
-        WHERE staff_id = :staff_id
-        AND clock_out IS NULL
-        ORDER BY id DESC LIMIT 1
-    """), {"staff_id": staff_id})
+            hours_worked = :hours
+        WHERE staff_id = :sid
+          AND date = CURRENT_DATE
+          AND clock_out IS NULL
+    """), {"hours": hours, "sid": staff_id})
 
     db.commit()
-    return {"message": "Clocked out successfully!"}
+    return {"message": "Clocked out!", "hours_worked": hours}
 
 @app.get("/staff/{staff_id}/attendance")
-def get_attendance(staff_id: int,
-                   db: Session = Depends(get_db)):
+def get_attendance(
+    staff_id: int,
+    db: Session = Depends(get_db)
+):
     result = db.execute(text("""
         SELECT date, clock_in, clock_out,
                hours_worked
         FROM attendance_log
-        WHERE staff_id = :staff_id
+        WHERE staff_id = :sid
         ORDER BY date DESC
         LIMIT 30
-    """), {"staff_id": staff_id})
-
+    """), {"sid": staff_id})
     logs = []
     for row in result:
         logs.append({
             "date": str(row[0]),
             "clock_in": str(row[1]) if row[1] else None,
             "clock_out": str(row[2]) if row[2] else None,
-            "hours_worked": float(row[3]) if row[3] else 0
+            "hours_worked": float(row[3] or 0)
         })
-    return {"logs": logs}
-import requests as http_requests
+    return {"attendance": logs}
 
-# ═══ REPORTS ═══
+# ════════════════════════════════════
+# REPORTS
+# ════════════════════════════════════
 
 @app.get("/reports/summary")
 def get_reports_summary(
-  period: str = "daily",
-  db: Session = Depends(get_db)
+    period: str = "daily",
+    db: Session = Depends(get_db)
 ):
     if period == "daily":
         date_filter = "DATE(created_at) = CURRENT_DATE"
@@ -404,29 +484,26 @@ def get_reports_summary(
             COUNT(*) as total_orders,
             COALESCE(SUM(total_amount), 0) as total_revenue,
             COALESCE(SUM(CASE WHEN payment_type='cash'
-              THEN total_amount ELSE 0 END), 0) as cash_revenue,
+              THEN total_amount ELSE 0 END), 0) as cash,
             COALESCE(SUM(CASE WHEN payment_type='upi'
-              THEN total_amount ELSE 0 END), 0) as upi_revenue,
+              THEN total_amount ELSE 0 END), 0) as upi,
             COALESCE(SUM(CASE WHEN payment_type='pending'
-              THEN total_amount ELSE 0 END), 0) as pending_revenue,
+              THEN total_amount ELSE 0 END), 0) as pending,
             COUNT(CASE WHEN status='collected' THEN 1 END)
-              as completed_orders
-        FROM orders
-        WHERE {date_filter}
+              as completed
+        FROM orders WHERE {date_filter}
     """)).fetchone()
 
     daily = db.execute(text("""
-        SELECT
-            DATE(created_at) as date,
-            COALESCE(SUM(total_amount), 0) as revenue,
-            COUNT(*) as orders
+        SELECT DATE(created_at) as date,
+               COALESCE(SUM(total_amount), 0) as revenue,
+               COUNT(*) as orders
         FROM orders
         WHERE created_at >= NOW() - INTERVAL '7 days'
-        AND status = 'collected'
+          AND status = 'collected'
         GROUP BY DATE(created_at)
         ORDER BY date ASC
     """))
-
     daily_data = []
     for row in daily:
         daily_data.append({
@@ -449,10 +526,10 @@ def get_reports_summary(
 def get_bestsellers(db: Session = Depends(get_db)):
     result = db.execute(text("""
         SELECT
-            p.id, p.name_en, p.name_te, p.sku,
-            p.selling_price,
+            p.id, p.name_en, p.name_te,
+            p.sku, p.selling_price,
             COALESCE(SUM(oi.qty), 0) as total_sold,
-            COALESCE(SUM(oi.qty * oi.price), 0) as total_revenue
+            COALESCE(SUM(oi.qty * oi.price), 0) as revenue
         FROM products p
         LEFT JOIN order_items oi ON p.id = oi.product_id
         LEFT JOIN orders o ON oi.order_id = o.id
@@ -462,7 +539,6 @@ def get_bestsellers(db: Session = Depends(get_db)):
         ORDER BY total_sold DESC
         LIMIT 10
     """))
-
     items = []
     for row in result:
         items.append({
@@ -470,78 +546,25 @@ def get_bestsellers(db: Session = Depends(get_db)):
             "name_en": row[1],
             "name_te": row[2],
             "sku": row[3],
-            "selling_price": float(row[4]),
+            "selling_price": float(row[4] or 0),
             "total_sold": row[5],
-            "total_revenue": float(row[6])
+            "total_revenue": float(row[6] or 0)
         })
     return {"bestsellers": items}
 
-# ═══ STOCK MANAGEMENT ═══
-
-@app.put("/products/{product_id}/stock")
-def update_stock(
-  product_id: int,
-  update: dict,
-  db: Session = Depends(get_db)
-):
-    new_qty = update.get("stock_qty", 0)
-    staff_id = update.get("staff_id")
-
-    db.execute(text("""
-        UPDATE products SET stock_qty = :qty WHERE id = :id
-    """), {"qty": new_qty, "id": product_id})
-
-    try:
-        db.execute(text("""
-            INSERT INTO stock_movements
-            (product_id, qty_change, new_qty, staff_id, reason)
-            VALUES (:pid, :qc, :nq, :sid, 'manual_update')
-        """), {
-            "pid": product_id,
-            "qc": new_qty,
-            "nq": new_qty,
-            "sid": staff_id
-        })
-    except:
-        pass
-
-    db.commit()
-    return {"message": "Stock updated!", "new_qty": new_qty}
-
-@app.get("/products/low-stock")
-def get_low_stock(db: Session = Depends(get_db)):
-    result = db.execute(text("""
-        SELECT id, name_en, name_te, sku,
-               stock_qty, selling_price
-        FROM products
-        WHERE stock_qty <= 5
-        ORDER BY stock_qty ASC
-    """))
-
-    items = []
-    for row in result:
-        items.append({
-            "id": row[0],
-            "name_en": row[1],
-            "name_te": row[2],
-            "sku": row[3],
-            "stock_qty": row[4],
-            "selling_price": float(row[5])
-        })
-    return {"low_stock": items, "count": len(items)}
-
-# ═══ PUSH NOTIFICATIONS ═══
+# ════════════════════════════════════
+# PUSH NOTIFICATIONS
+# ════════════════════════════════════
 
 @app.post("/push-tokens")
 def save_push_token(
-  data: dict,
-  db: Session = Depends(get_db)
+    data: dict,
+    db: Session = Depends(get_db)
 ):
     token = data.get("token")
     staff_id = data.get("staff_id")
     if not token:
         return {"error": "No token"}
-
     db.execute(text("""
         INSERT INTO push_tokens (staff_id, token, updated_at)
         VALUES (:sid, :token, NOW())
@@ -551,45 +574,10 @@ def save_push_token(
     db.commit()
     return {"message": "Token saved!"}
 
-@app.post("/notify/new-order")
-def notify_new_order(
-  data: dict,
-  db: Session = Depends(get_db)
-):
-    customer_name = data.get("customer_name", "Customer")
-    total = data.get("total", 0)
-    pickup_time = data.get("pickup_time", "")
-    custom_id = data.get("custom_id", "")
-
-    result = db.execute(text(
-        "SELECT DISTINCT token FROM push_tokens WHERE token IS NOT NULL"
-    ))
-    tokens = [row[0] for row in result]
-    if not tokens:
-        return {"message": "No tokens"}
-
-    messages = [{
-        "to": token,
-        "title": f"🔔 New Order {custom_id}!",
-        "body": f"👤 {customer_name} • ₹{total} • 📅 {pickup_time}",
-        "sound": "default",
-        "badge": 1
-    } for token in tokens]
-
-    try:
-        resp = http_requests.post(
-            "https://exp.host/--/api/v2/push/send",
-            json=messages,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        return {"message": f"Notified {len(tokens)} devices"}
-    except Exception as e:
-        return {"error": str(e)}
-    # ═══ CUSTOMER TOKENS ═══
 @app.post("/customer-tokens")
 def save_customer_token(
-  data: dict, db: Session = Depends(get_db)
+    data: dict,
+    db: Session = Depends(get_db)
 ):
     token = data.get("token")
     phone = data.get("phone")
@@ -604,30 +592,75 @@ def save_customer_token(
     db.commit()
     return {"message": "Token saved!"}
 
+@app.post("/notify/new-order")
+def notify_new_order(
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    customer_name = data.get("customer_name", "Customer")
+    total = data.get("total", 0)
+    pickup_time = data.get("pickup_time", "")
+    custom_id = data.get("custom_id", "")
+
+    result = db.execute(text(
+        "SELECT DISTINCT token FROM push_tokens"
+        " WHERE token IS NOT NULL"
+    ))
+    tokens = [row[0] for row in result]
+    if not tokens:
+        return {"message": "No tokens"}
+
+    messages = [{
+        "to": token,
+        "title": f"🔔 New Order {custom_id}!",
+        "body": f"👤 {customer_name} • ₹{total}"
+                f" • 📅 {pickup_time}",
+        "sound": "default",
+        "badge": 1
+    } for token in tokens]
+
+    try:
+        http_requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=messages,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        return {"message": f"Notified {len(tokens)} devices"}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.post("/notify/order-ready/{order_id}")
 def notify_order_ready(
-  order_id: int, db: Session = Depends(get_db)
+    order_id: int,
+    db: Session = Depends(get_db)
 ):
     order = db.execute(text("""
         SELECT customer_phone, custom_id, total_amount
         FROM orders WHERE id = :id
     """), {"id": order_id}).fetchone()
+
     if not order:
         return {"error": "Order not found"}
+
     token_row = db.execute(text("""
         SELECT token FROM customer_tokens
         WHERE phone = :phone
     """), {"phone": order[0]}).fetchone()
+
     if not token_row:
-        return {"message": "No token"}
+        return {"message": "No customer token"}
+
     try:
         http_requests.post(
             "https://exp.host/--/api/v2/push/send",
             json={
                 "to": token_row[0],
                 "title": "🎉 Order Ready! Come Pick Up!",
-                "body": f"Order {order[1] or f'RAS-{order_id}'} is ready! ₹{order[2]}",
-                "sound": "default", "badge": 1
+                "body": f"Order {order[1] or f'RAS-{order_id}'}"
+                        f" is ready! ₹{order[2]}",
+                "sound": "default",
+                "badge": 1
             },
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -635,11 +668,15 @@ def notify_order_ready(
         return {"message": "Customer notified!"}
     except Exception as e:
         return {"error": str(e)}
-    # ═══ MECHANIC APPROVAL SYSTEM ═══
+
+# ════════════════════════════════════
+# MECHANIC APPROVAL SYSTEM
+# ════════════════════════════════════
 
 @app.post("/mechanics/register")
 def register_mechanic(
-  data: dict, db: Session = Depends(get_db)
+    data: dict,
+    db: Session = Depends(get_db)
 ):
     name = data.get("name", "")
     phone = data.get("phone", "")
@@ -649,42 +686,84 @@ def register_mechanic(
     if not name or not phone:
         return {"error": "Name and phone required"}
 
-    # Check if already registered
     existing = db.execute(text("""
         SELECT id, status FROM mechanic_profiles
         WHERE phone = :phone
     """), {"phone": phone}).fetchone()
 
     if existing:
-        return {
-            "id": existing[0],
-            "status": existing[1],
-            "message": "Already registered"
-        }
+        existing_id = existing[0]
+        existing_status = existing[1]
 
+        # Already approved
+        if existing_status == 'approved':
+            return {
+                "id": existing_id,
+                "status": "approved",
+                "message": "Already approved!"
+            }
+
+        # Still pending
+        if existing_status == 'pending':
+            return {
+                "id": existing_id,
+                "status": "pending",
+                "message": "Still pending approval!"
+            }
+
+        # Was rejected — allow re-registration!
+        if existing_status == 'rejected':
+            db.execute(text("""
+                UPDATE mechanic_profiles
+                SET status = 'pending',
+                    name = :name,
+                    shop_name = :shop_name,
+                    area = :area,
+                    approved_by = NULL,
+                    approved_at = NULL,
+                    notes = NULL
+                WHERE phone = :phone
+            """), {
+                "name": name,
+                "shop_name": shop_name,
+                "area": area,
+                "phone": phone
+            })
+            db.commit()
+            return {
+                "id": existing_id,
+                "status": "pending",
+                "message": "Re-application submitted!"
+            }
+
+    # New registration
     result = db.execute(text("""
         INSERT INTO mechanic_profiles
         (name, phone, shop_name, area, status)
         VALUES (:name, :phone, :shop_name, :area, 'pending')
         RETURNING id
     """), {
-        "name": name, "phone": phone,
-        "shop_name": shop_name, "area": area
+        "name": name,
+        "phone": phone,
+        "shop_name": shop_name,
+        "area": area
     })
     mechanic_id = result.fetchone()[0]
     db.commit()
 
-    # Notify all staff about new mechanic request
+    # Notify all staff
     try:
         tokens = db.execute(text(
-            "SELECT DISTINCT token FROM push_tokens WHERE token IS NOT NULL"
+            "SELECT DISTINCT token FROM push_tokens"
+            " WHERE token IS NOT NULL"
         ))
         token_list = [row[0] for row in tokens]
         if token_list:
             messages = [{
                 "to": token,
                 "title": "🔧 New Mechanic Request!",
-                "body": f"{name} from {area or 'Nandyal'} wants mechanic access",
+                "body": f"{name} from {area or 'Nandyal'}"
+                        f" wants mechanic access",
                 "sound": "default"
             } for token in token_list]
             http_requests.post(
@@ -704,7 +783,8 @@ def register_mechanic(
 
 @app.get("/mechanics/check/{phone}")
 def check_mechanic_status(
-  phone: str, db: Session = Depends(get_db)
+    phone: str,
+    db: Session = Depends(get_db)
 ):
     result = db.execute(text("""
         SELECT id, name, phone, shop_name,
@@ -738,7 +818,6 @@ def get_all_mechanics(db: Session = Depends(get_db)):
             ELSE 2 END,
           created_at DESC
     """))
-
     mechanics = []
     for row in result:
         mechanics.append({
@@ -752,19 +831,22 @@ def get_all_mechanics(db: Session = Depends(get_db)):
         })
     return {
         "mechanics": mechanics,
-        "pending": sum(1 for m in mechanics
-                       if m["status"] == "pending"),
-        "approved": sum(1 for m in mechanics
-                        if m["status"] == "approved"),
-        "rejected": sum(1 for m in mechanics
-                        if m["status"] == "rejected"),
+        "pending": sum(
+            1 for m in mechanics if m["status"] == "pending"
+        ),
+        "approved": sum(
+            1 for m in mechanics if m["status"] == "approved"
+        ),
+        "rejected": sum(
+            1 for m in mechanics if m["status"] == "rejected"
+        ),
     }
 
 @app.put("/mechanics/{mechanic_id}/approve")
 def approve_mechanic(
-  mechanic_id: int,
-  data: dict,
-  db: Session = Depends(get_db)
+    mechanic_id: int,
+    data: dict,
+    db: Session = Depends(get_db)
 ):
     status = data.get("status", "approved")
     approved_by = data.get("approved_by")
@@ -799,7 +881,7 @@ def approve_mechanic(
 
             if token_row:
                 msg = (
-                    "🎉 Approved! You now get 5% mechanic discount!"
+                    "🎉 Approved! You get 5% mechanic discount!"
                     if status == "approved"
                     else "❌ Your mechanic request was not approved."
                 )
