@@ -901,3 +901,19 @@ def approve_mechanic(
         pass
 
     return {"message": f"Mechanic {status}!"}
+@app.put("/staff/{staff_id}/pin")
+def update_staff_pin(
+    staff_id: int,
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    new_pin = data.get("pin")
+    if not new_pin or len(new_pin) != 4:
+        return {"error": "PIN must be 4 digits"}
+
+    db.execute(text("""
+        UPDATE staff_profiles
+        SET pin = :pin WHERE id = :id
+    """), {"pin": new_pin, "id": staff_id})
+    db.commit()
+    return {"message": "PIN updated successfully!"}
