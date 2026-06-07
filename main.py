@@ -986,3 +986,217 @@ def redeem_loyalty_points(
     """), {"phone": phone, "points": points})
     db.commit()
     return {"message": "Points redeemed!", "redeemed": points}
+# ════════════════════════════════════
+# CUSTOMER ANALYTICS
+# ════════════════════════════════════
+
+@app.get("/customers/analytics")
+def get_customer_analytics(
+    db: Session = Depends(get_db)
+):
+    # Top customers by spending
+    top_spenders = db.execute(text("""
+        SELECT customer_name, customer_phone,
+               COUNT(*) as order_count,
+               SUM(total_amount) as total_spent
+        FROM orders
+        WHERE status = 'collected'
+        GROUP BY customer_name, customer_phone
+        ORDER BY total_spent DESC
+        LIMIT 10
+    """)).fetchall()
+
+    # Top customers by orders
+    top_orderers = db.execute(text("""
+        SELECT customer_name, customer_phone,
+               COUNT(*) as order_count,
+               SUM(total_amount) as total_spent
+        FROM orders
+        GROUP BY customer_name, customer_phone
+        ORDER BY order_count DESC
+        LIMIT 10
+    """)).fetchall()
+
+    # This month stats
+    monthly = db.execute(text("""
+        SELECT
+            COUNT(DISTINCT customer_phone) as unique_customers,
+            COUNT(*) as total_orders,
+            COALESCE(SUM(total_amount), 0) as total_revenue
+        FROM orders
+        WHERE DATE_TRUNC('month', created_at) =
+              DATE_TRUNC('month', NOW())
+    """)).fetchone()
+
+    # New customers this month
+    new_customers = db.execute(text("""
+        SELECT COUNT(DISTINCT customer_phone)
+        FROM orders
+        WHERE DATE_TRUNC('month', created_at) =
+              DATE_TRUNC('month', NOW())
+        AND customer_phone NOT IN (
+            SELECT DISTINCT customer_phone FROM orders
+            WHERE created_at < DATE_TRUNC('month', NOW())
+        )
+    """)).fetchone()
+
+    return {
+        "top_spenders": [
+            {
+                "name": r[0], "phone": r[1],
+                "order_count": r[2],
+                "total_spent": float(r[3] or 0)
+            } for r in top_spenders
+        ],
+        "top_orderers": [
+            {
+                "name": r[0], "phone": r[1],
+                "order_count": r[2],
+                "total_spent": float(r[3] or 0)
+            } for r in top_orderers
+        ],
+        "monthly": {
+            "unique_customers": monthly[0] or 0,
+            "total_orders": monthly[1] or 0,
+            "total_revenue": float(monthly[2] or 0)
+        },
+        "new_customers": new_customers[0] or 0
+    }
+
+# ════════════════════════════════════
+# ALL CUSTOMERS (for broadcast)
+# ════════════════════════════════════
+
+@app.get("/customers/all")
+def get_all_customers(
+    db: Session = Depends(get_db)
+):
+    customers = db.execute(text("""
+        SELECT DISTINCT customer_name,
+               customer_phone
+        FROM orders
+        WHERE customer_phone IS NOT NULL
+        ORDER BY customer_name
+    """)).fetchall()
+    return {
+        "customers": [
+            {"name": r[0], "phone": r[1]}
+            for r in customers
+        ],
+        "count": len(customers)
+    }
+
+# ════════════════════════════════════
+# PRODUCT BARCODE SEARCH
+# ════════════════════════════════════
+
+@app.get("/products/barcode/{code}")
+def search_by_barcode(
+    code: str,
+    db: Session = Depends(get_db)
+):
+    product = db.execute(text("""
+        SELECT * FROM products
+        WHERE sku = :code
+        OR barcode = :code
+        LIMIT 1
+    """), {"code": code}).fetchone()
+
+    if not product:
+        # Try partial match
+        product = db.execute(text("""
+            SELECT * FROM products
+            WHERE sku ILIKE :code
+            OR name_en ILIKE :code
+            LIMIT 1
+        """), {"code": f"%{code}%"}).fetchone()
+
+    if not product:
+        return {"found": False, "product": None}
+
+    cols = ["id","name_en","name_te","sku",
+            "mrp","selling_price","stock_qty","barcode"]
+    return {
+        "found": True,
+        "product": dict(zip(cols, product))
+    }
+
+# ════════════════════════════════════
+# PUSH NOTIFICATIONS
+# ════════════════════════════════════
+
+@app.post("/notify/order-ready/{order_id}")
+def notify_order_ready(
+    order_id: int,
+    db: Session = Depends(get_db)
+):
+    order = db.execute(text("""
+        SELECT customer_phone, custom_id,
+               total_amount
+        FROM orders WHERE id = :id
+    """), {"id": order_id}).fetchone()
+
+    if not order:
+        return {"sent": False}
+
+    token = db.execute(text("""
+        SELECT token FROM customer_tokens
+        WHERE phone = :phone
+        LIMIT 1
+    """), {"phone": order[0]}).fetchone()
+
+    if not token:
+        return {"sent": False, "reason": "No token"}
+
+    import httpx
+    response = httpx.post(
+        "https://exp.host/--/api/v2/push/send",
+        json={
+            "to": token[0],
+            "title": "🎉 Order Ready for Pickup!",
+            "body": f"Order {order[1]} · ₹{order[2]} is ready! Come collect it now.",
+            "data": {"order_id": order_id},
+            "sound": "default",
+            "priority": "high"
+        }
+    )
+    return {"sent": True}
+
+@app.post("/notify/broadcast")
+def broadcast_notification(
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    title = data.get("title", "New Update!")
+    body = data.get("body", "")
+
+    tokens = db.execute(text("""
+        SELECT token FROM customer_tokens
+        WHERE token IS NOT NULL
+    """)).fetchall()
+
+    if not tokens:
+        return {"sent": 0}
+
+    import httpx
+    messages = [
+        {
+            "to": t[0],
+            "title": title,
+            "body": body,
+            "sound": "default"
+        }
+        for t in tokens
+    ]
+
+    # Send in batches of 100
+    sent = 0
+    for i in range(0, len(messages), 100):
+        batch = messages[i:i+100]
+        httpx.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=batch
+        )
+        sent += len(batch)
+
+    return {"sent": sent, "total_tokens": len(tokens)}
