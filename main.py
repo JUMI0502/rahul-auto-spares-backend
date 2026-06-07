@@ -1200,3 +1200,129 @@ def broadcast_notification(
         sent += len(batch)
 
     return {"sent": sent, "total_tokens": len(tokens)}
+# ════════════════════════════════════
+# ADD NEW PRODUCT
+# ════════════════════════════════════
+
+@app.post("/products")
+def add_product(
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    name_en = data.get("name_en", "").strip()
+    name_te = data.get("name_te", "").strip()
+    sku = data.get("sku", "").strip().upper()
+    mrp = float(data.get("mrp", 0))
+    selling_price = float(data.get("selling_price", 0))
+    stock_qty = int(data.get("stock_qty", 0))
+
+    if not name_en or not sku or mrp <= 0:
+        return {"error": "Name, SKU and MRP required"}
+
+    existing = db.execute(text("""
+        SELECT id FROM products WHERE sku = :sku
+    """), {"sku": sku}).fetchone()
+
+    if existing:
+        return {"error": f"SKU {sku} already exists!"}
+
+    db.execute(text("""
+        INSERT INTO products
+        (name_en, name_te, sku, mrp, selling_price, stock_qty)
+        VALUES (:name_en, :name_te, :sku, :mrp, :sp, :sq)
+    """), {
+        "name_en": name_en, "name_te": name_te,
+        "sku": sku, "mrp": mrp,
+        "sp": selling_price, "sq": stock_qty
+    })
+    db.commit()
+    return {"message": "Product added!", "sku": sku}
+
+# ════════════════════════════════════
+# PRODUCTS BY BRAND
+# ════════════════════════════════════
+
+@app.get("/products/brand/{sku_prefix}")
+def get_products_by_brand(
+    sku_prefix: str,
+    db: Session = Depends(get_db)
+):
+    products = db.execute(text("""
+        SELECT * FROM products
+        WHERE sku ILIKE :prefix
+        ORDER BY name_en
+    """), {"prefix": f"{sku_prefix}%"}).fetchall()
+
+    cols = ["id","name_en","name_te","sku",
+            "mrp","selling_price","stock_qty"]
+    return {
+        "products": [dict(zip(cols, p)) for p in products]
+    }
+
+# ════════════════════════════════════
+# DAILY SALES SUMMARY
+# ════════════════════════════════════
+
+@app.get("/reports/daily-summary")
+def get_daily_summary(
+    db: Session = Depends(get_db)
+):
+    today_orders = db.execute(text("""
+        SELECT customer_name, customer_phone,
+               total_amount, status, payment_type,
+               custom_id, created_at
+        FROM orders
+        WHERE DATE(created_at) = CURRENT_DATE
+        ORDER BY created_at DESC
+    """)).fetchall()
+
+    total_revenue = sum(
+        float(o[2] or 0) for o in today_orders
+        if o[3] == 'collected'
+    )
+    total_orders = len(today_orders)
+    pending = sum(
+        1 for o in today_orders
+        if o[3] not in ['collected']
+    )
+    cash = sum(
+        float(o[2] or 0) for o in today_orders
+        if o[4] == 'cash' and o[3] == 'collected'
+    )
+    upi = sum(
+        float(o[2] or 0) for o in today_orders
+        if o[4] == 'upi' and o[3] == 'collected'
+    )
+
+    bestsellers = db.execute(text("""
+        SELECT p.name_en, SUM(oi.quantity) as qty
+        FROM order_items oi
+        JOIN products p ON p.id = oi.product_id
+        JOIN orders o ON o.id = oi.order_id
+        WHERE DATE(o.created_at) = CURRENT_DATE
+        GROUP BY p.name_en
+        ORDER BY qty DESC
+        LIMIT 5
+    """)).fetchall()
+
+    return {
+        "date": str(date.today()),
+        "total_orders": total_orders,
+        "total_revenue": float(total_revenue),
+        "pending_orders": pending,
+        "cash": float(cash),
+        "upi": float(upi),
+        "bestsellers": [
+            {"name": b[0], "qty": b[1]}
+            for b in bestsellers
+        ],
+        "orders": [
+            {
+                "id": o[5],
+                "customer": o[0],
+                "amount": float(o[2] or 0),
+                "status": o[3]
+            }
+            for o in today_orders[:10]
+        ]
+    }
