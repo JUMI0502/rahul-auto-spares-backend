@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
-from datetime import datetime
+from datetime import datetime, date
 import os
 from dotenv import load_dotenv
 import requests as http_requests
@@ -393,13 +393,13 @@ def clock_in(
     db.execute(text("""
         UPDATE staff_profiles
         SET is_clocked_in = TRUE,
-            clock_in_time = NOW()
+            clock_in_time = datetime('now')
         WHERE id = :id
     """), {"id": staff_id})
     db.execute(text("""
         INSERT INTO attendance_log
         (staff_id, clock_in, date)
-        VALUES (:sid, NOW(), CURRENT_DATE)
+        VALUES (:sid, datetime('now'), date('now'))
     """), {"sid": staff_id})
     db.commit()
     return {"message": "Clocked in!"}
@@ -416,7 +416,7 @@ def clock_out(
 
     hours = 0
     if result and result[0]:
-        from datetime import datetime
+        from datetime import datetime, date
         now = datetime.now()
         diff = now - result[0].replace(tzinfo=None)
         hours = round(diff.total_seconds() / 3600, 2)
@@ -424,17 +424,17 @@ def clock_out(
     db.execute(text("""
         UPDATE staff_profiles
         SET is_clocked_in = FALSE,
-            clock_out_time = NOW(),
+            clock_out_time = datetime('now'),
             total_hours_today = :hours
         WHERE id = :id
     """), {"hours": hours, "id": staff_id})
 
     db.execute(text("""
         UPDATE attendance_log
-        SET clock_out = NOW(),
+        SET clock_out = datetime('now'),
             hours_worked = :hours
         WHERE staff_id = :sid
-          AND date = CURRENT_DATE
+          AND date = date('now')
           AND clock_out IS NULL
     """), {"hours": hours, "sid": staff_id})
 
@@ -474,11 +474,11 @@ def get_reports_summary(
     db: Session = Depends(get_db)
 ):
     if period == "daily":
-        date_filter = "DATE(created_at) = CURRENT_DATE"
+        date_filter = "date(created_at) = date('now')"
     elif period == "weekly":
-        date_filter = "created_at >= NOW() - INTERVAL '7 days'"
+        date_filter = "created_at >= datetime('now') - INTERVAL '7 days'"
     else:
-        date_filter = "created_at >= NOW() - INTERVAL '30 days'"
+        date_filter = "created_at >= datetime('now') - INTERVAL '30 days'"
 
     result = db.execute(text(f"""
         SELECT
@@ -496,13 +496,13 @@ def get_reports_summary(
     """)).fetchone()
 
     daily = db.execute(text("""
-        SELECT DATE(created_at) as date,
+        SELECT date(created_at) as date,
                COALESCE(SUM(total_amount), 0) as revenue,
                COUNT(*) as orders
         FROM orders
-        WHERE created_at >= NOW() - INTERVAL '7 days'
+        WHERE created_at >= datetime('now') - INTERVAL '7 days'
           AND status = 'collected'
-        GROUP BY DATE(created_at)
+        GROUP BY date(created_at)
         ORDER BY date ASC
     """))
     daily_data = []
@@ -568,9 +568,9 @@ def save_push_token(
         return {"error": "No token"}
     db.execute(text("""
         INSERT INTO push_tokens (staff_id, token, updated_at)
-        VALUES (:sid, :token, NOW())
+        VALUES (:sid, :token, datetime('now'))
         ON CONFLICT (token) DO UPDATE
-        SET staff_id = :sid, updated_at = NOW()
+        SET staff_id = :sid, updated_at = datetime('now')
     """), {"sid": staff_id, "token": token})
     db.commit()
     return {"message": "Token saved!"}
@@ -586,9 +586,9 @@ def save_customer_token(
         return {"error": "Missing data"}
     db.execute(text("""
         INSERT INTO customer_tokens (phone, token, updated_at)
-        VALUES (:phone, :token, NOW())
+        VALUES (:phone, :token, datetime('now'))
         ON CONFLICT (phone) DO UPDATE
-        SET token = :token, updated_at = NOW()
+        SET token = :token, updated_at = datetime('now')
     """), {"phone": phone, "token": token})
     db.commit()
     return {"message": "Token saved!"}
@@ -857,7 +857,7 @@ def approve_mechanic(
         UPDATE mechanic_profiles
         SET status = :status,
             approved_by = :approved_by,
-            approved_at = NOW(),
+            approved_at = datetime('now'),
             notes = :notes
         WHERE id = :id
     """), {
@@ -954,12 +954,12 @@ def add_loyalty_points(
     db.execute(text("""
         INSERT INTO customer_loyalty_points
         (phone, points, total_earned, updated_at)
-        VALUES (:phone, :points, :points, NOW())
+        VALUES (:phone, :points, :points, datetime('now'))
         ON CONFLICT (phone) DO UPDATE
         SET points = customer_loyalty_points.points + :points,
             total_earned =
               customer_loyalty_points.total_earned + :points,
-            updated_at = NOW()
+            updated_at = datetime('now')
     """), {"phone": phone, "points": points})
     db.commit()
     return {"message": "Points added!", "added": points}
@@ -981,7 +981,7 @@ def redeem_loyalty_points(
         UPDATE customer_loyalty_points
         SET points = points - :points,
             total_redeemed = total_redeemed + :points,
-            updated_at = NOW()
+            updated_at = datetime('now')
         WHERE phone = :phone
     """), {"phone": phone, "points": points})
     db.commit()
@@ -1024,19 +1024,19 @@ def get_customer_analytics(
             COUNT(*) as total_orders,
             COALESCE(SUM(total_amount), 0) as total_revenue
         FROM orders
-        WHERE DATE_TRUNC('month', created_at) =
-              DATE_TRUNC('month', NOW())
+        WHERE strftime('%Y-%m', created_at) =
+              strftime('%Y-%m', 'now')
     """)).fetchone()
 
     # New customers this month
     new_customers = db.execute(text("""
         SELECT COUNT(DISTINCT customer_phone)
         FROM orders
-        WHERE DATE_TRUNC('month', created_at) =
-              DATE_TRUNC('month', NOW())
+        WHERE strftime('%Y-%m', created_at) =
+              strftime('%Y-%m', 'now')
         AND customer_phone NOT IN (
             SELECT DISTINCT customer_phone FROM orders
-            WHERE created_at < DATE_TRUNC('month', NOW())
+            WHERE created_at < strftime('%Y-%m', 'now')
         )
     """)).fetchone()
 
@@ -1106,8 +1106,8 @@ def search_by_barcode(
         # Try partial match
         product = db.execute(text("""
             SELECT * FROM products
-            WHERE sku ILIKE :code
-            OR name_en ILIKE :code
+            WHERE sku LIKE :code
+            OR name_en LIKE :code
             LIMIT 1
         """), {"code": f"%{code}%"}).fetchone()
 
@@ -1249,7 +1249,7 @@ def get_products_by_brand(
 ):
     products = db.execute(text("""
         SELECT * FROM products
-        WHERE sku ILIKE :prefix
+        WHERE sku LIKE :prefix
         ORDER BY name_en
     """), {"prefix": f"{sku_prefix}%"}).fetchall()
 
@@ -1272,7 +1272,7 @@ def get_daily_summary(
                total_amount, status, payment_type,
                custom_id, created_at
         FROM orders
-        WHERE DATE(created_at) = CURRENT_DATE
+        WHERE date(created_at) = date('now')
         ORDER BY created_at DESC
     """)).fetchall()
 
@@ -1299,7 +1299,7 @@ def get_daily_summary(
         FROM order_items oi
         JOIN products p ON p.id = oi.product_id
         JOIN orders o ON o.id = oi.order_id
-        WHERE DATE(o.created_at) = CURRENT_DATE
+        WHERE date(o.created_at) = date('now')
         GROUP BY p.name_en
         ORDER BY qty DESC
         LIMIT 5
