@@ -1329,7 +1329,7 @@ def get_daily_summary(
 # ── ADD THESE IMPORTS IF NOT ALREADY THERE ──
 import base64
 import time
-import httpx  # or requests — whichever you already use
+
 
 # ── CUSTOMER PUSH TOKEN SAVE ──
 @app.post("/customers/{phone}/push-token")
