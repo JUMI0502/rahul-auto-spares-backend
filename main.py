@@ -393,13 +393,13 @@ def clock_in(
     db.execute(text("""
         UPDATE staff_profiles
         SET is_clocked_in = TRUE,
-            clock_in_time = datetime('now')
+            clock_in_time = NOW()
         WHERE id = :id
     """), {"id": staff_id})
     db.execute(text("""
         INSERT INTO attendance_log
         (staff_id, clock_in, date)
-        VALUES (:sid, datetime('now'), date('now'))
+        VALUES (:sid, NOW(), date('now'))
     """), {"sid": staff_id})
     db.commit()
     return {"message": "Clocked in!"}
@@ -424,14 +424,14 @@ def clock_out(
     db.execute(text("""
         UPDATE staff_profiles
         SET is_clocked_in = FALSE,
-            clock_out_time = datetime('now'),
+            clock_out_time = NOW(),
             total_hours_today = :hours
         WHERE id = :id
     """), {"hours": hours, "id": staff_id})
 
     db.execute(text("""
         UPDATE attendance_log
-        SET clock_out = datetime('now'),
+        SET clock_out = NOW(),
             hours_worked = :hours
         WHERE staff_id = :sid
           AND date = date('now')
@@ -476,9 +476,9 @@ def get_reports_summary(
     if period == "daily":
         date_filter = "date(created_at) = date('now')"
     elif period == "weekly":
-        date_filter = "created_at >= datetime('now') - INTERVAL '7 days'"
+        date_filter = "created_at >= NOW() - INTERVAL '7 days'"
     else:
-        date_filter = "created_at >= datetime('now') - INTERVAL '30 days'"
+        date_filter = "created_at >= NOW() - INTERVAL '30 days'"
 
     result = db.execute(text(f"""
         SELECT
@@ -500,7 +500,7 @@ def get_reports_summary(
                COALESCE(SUM(total_amount), 0) as revenue,
                COUNT(*) as orders
         FROM orders
-        WHERE created_at >= datetime('now') - INTERVAL '7 days'
+        WHERE created_at >= NOW() - INTERVAL '7 days'
           AND status = 'collected'
         GROUP BY date(created_at)
         ORDER BY date ASC
@@ -568,9 +568,9 @@ def save_push_token(
         return {"error": "No token"}
     db.execute(text("""
         INSERT INTO push_tokens (staff_id, token, updated_at)
-        VALUES (:sid, :token, datetime('now'))
+        VALUES (:sid, :token, NOW())
         ON CONFLICT (token) DO UPDATE
-        SET staff_id = :sid, updated_at = datetime('now')
+        SET staff_id = :sid, updated_at = NOW()
     """), {"sid": staff_id, "token": token})
     db.commit()
     return {"message": "Token saved!"}
@@ -586,9 +586,9 @@ def save_customer_token(
         return {"error": "Missing data"}
     db.execute(text("""
         INSERT INTO customer_tokens (phone, token, updated_at)
-        VALUES (:phone, :token, datetime('now'))
+        VALUES (:phone, :token, NOW())
         ON CONFLICT (phone) DO UPDATE
-        SET token = :token, updated_at = datetime('now')
+        SET token = :token, updated_at = NOW()
     """), {"phone": phone, "token": token})
     db.commit()
     return {"message": "Token saved!"}
@@ -857,7 +857,7 @@ def approve_mechanic(
         UPDATE mechanic_profiles
         SET status = :status,
             approved_by = :approved_by,
-            approved_at = datetime('now'),
+            approved_at = NOW(),
             notes = :notes
         WHERE id = :id
     """), {
@@ -954,12 +954,12 @@ def add_loyalty_points(
     db.execute(text("""
         INSERT INTO customer_loyalty_points
         (phone, points, total_earned, updated_at)
-        VALUES (:phone, :points, :points, datetime('now'))
+        VALUES (:phone, :points, :points, NOW())
         ON CONFLICT (phone) DO UPDATE
         SET points = customer_loyalty_points.points + :points,
             total_earned =
               customer_loyalty_points.total_earned + :points,
-            updated_at = datetime('now')
+            updated_at = NOW()
     """), {"phone": phone, "points": points})
     db.commit()
     return {"message": "Points added!", "added": points}
@@ -981,7 +981,7 @@ def redeem_loyalty_points(
         UPDATE customer_loyalty_points
         SET points = points - :points,
             total_redeemed = total_redeemed + :points,
-            updated_at = datetime('now')
+            updated_at = NOW()
         WHERE phone = :phone
     """), {"phone": phone, "points": points})
     db.commit()
@@ -1326,3 +1326,149 @@ def get_daily_summary(
             for o in today_orders[:10]
         ]
     }
+# ── ADD THESE IMPORTS IF NOT ALREADY THERE ──
+import base64
+import time
+import httpx  # or requests — whichever you already use
+
+# ── CUSTOMER PUSH TOKEN SAVE ──
+@app.post("/customers/{phone}/push-token")
+async def save_customer_push_token(phone: str, request: Request, db=Depends(get_db)):
+    try:
+        body = await request.json()
+        token = body.get("token", "").strip()
+        if not token:
+            return {"error": "No token"}
+        db.execute(text("""
+            INSERT INTO customer_tokens (phone, token)
+            VALUES (:phone, :token)
+            ON CONFLICT (phone) DO UPDATE SET token = :token
+        """), {"phone": phone, "token": token})
+        db.commit()
+        return {"saved": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ── PRODUCT IMAGE UPLOAD ──
+@app.post("/products/{product_id}/upload-image")
+async def upload_product_image(product_id: int, request: Request, db=Depends(get_db)):
+    try:
+        body = await request.json()
+        image_b64 = body.get("image_base64", "")
+        if not image_b64:
+            return {"error": "No image provided"}
+
+        image_bytes = base64.b64decode(image_b64)
+        filename = f"products/prod_{product_id}_{int(time.time())}.jpg"
+        supabase_url = os.getenv("SUPABASE_URL", "")
+        supabase_key = os.getenv("SUPABASE_KEY", "")
+
+        # Upload to Supabase Storage bucket named "product-images"
+        upload_url = f"{supabase_url}/storage/v1/object/product-images/{filename}"
+        headers = {
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "image/jpeg",
+            "x-upsert": "true"
+        }
+        r = requests.put(upload_url, headers=headers, data=image_bytes)
+
+        if r.status_code not in [200, 201]:
+            return {"error": f"Upload failed: {r.status_code}"}
+
+        public_url = f"{supabase_url}/storage/v1/object/public/product-images/{filename}"
+
+        db.execute(text(
+            "UPDATE products SET image_url = :url WHERE id = :id"
+        ), {"url": public_url, "id": product_id})
+        db.commit()
+
+        return {"image_url": public_url, "success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ── NOTIFY ORDER READY (UPDATE THE EXISTING ONE) ──
+# Find your existing /notify/order-ready/{order_id} and replace it with this:
+@app.post("/notify/order-ready/{order_id}")
+async def notify_order_ready(order_id: int, db=Depends(get_db)):
+    try:
+        # Get order
+        order = db.execute(text(
+            "SELECT * FROM orders WHERE id = :id"
+        ), {"id": order_id}).fetchone()
+        if not order:
+            return {"sent": False, "error": "Order not found"}
+
+        order = dict(order._mapping)
+        phone = order.get("customer_phone", "")
+        if not phone:
+            return {"sent": False, "error": "No customer phone"}
+
+        # Get push token
+        row = db.execute(text(
+            "SELECT token FROM customer_tokens WHERE phone = :phone"
+        ), {"phone": phone}).fetchone()
+        if not row:
+            return {"sent": False, "error": "No push token"}
+
+        token = row[0]
+        order_id_str = order.get("custom_id") or f"RAS-{order_id}"
+
+        # Send via Expo Push API
+        payload = {
+            "to": token,
+            "title": "🎉 Your order is Ready!",
+            "body": f"Order {order_id_str} is ready for pickup!\n📍 New Rahul Auto Spares, Nandyal",
+            "data": {"order_id": order_id, "type": "order_ready"},
+            "sound": "default",
+            "priority": "high",
+            "badge": 1,
+        }
+        r = requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=payload,
+            headers={
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip, deflate",
+                "Content-Type": "application/json",
+            }
+        )
+        return {"sent": True, "status": r.status_code, "token": token[:20]+"..."}
+    except Exception as e:
+        return {"sent": False, "error": str(e)}
+
+# ── BROADCAST PUSH TO ALL CUSTOMERS ──
+@app.post("/notify/broadcast")
+async def broadcast_push(request: Request, db=Depends(get_db)):
+    try:
+        body = await request.json()
+        title = body.get("title", "New Rahul Auto Spares")
+        msg_body = body.get("body", "")
+
+        tokens = db.execute(
+            text("SELECT DISTINCT token FROM customer_tokens WHERE token IS NOT NULL")
+        ).fetchall()
+
+        if not tokens:
+            return {"sent": 0}
+
+        sent = 0
+        for row in tokens:
+            token = row[0]
+            try:
+                requests.post(
+                    "https://exp.host/--/api/v2/push/send",
+                    json={
+                        "to": token,
+                        "title": title,
+                        "body": msg_body,
+                        "sound": "default",
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
+                sent += 1
+            except:
+                pass
+
+        return {"sent": sent}
+    except Exception as e:
+        return {"sent": 0, "error": str(e)}
