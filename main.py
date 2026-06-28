@@ -1472,3 +1472,106 @@ async def broadcast_push(request: Request, db=Depends(get_db)):
         return {"sent": sent}
     except Exception as e:
         return {"sent": 0, "error": str(e)}
+# ── OFFERS / DEALS ──
+@app.get("/offers/all")
+def get_all_offers(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            SELECT id, title, description, discount_percent, 
+                   emoji, is_active, created_at
+            FROM offers
+            ORDER BY created_at DESC
+        """)).fetchall()
+        offers = [dict(r._mapping) for r in result]
+        return {"offers": offers}
+    except:
+        return {"offers": []}
+
+@app.get("/offers")
+def get_active_offers(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            SELECT id, title, description, discount_percent,
+                   emoji, is_active, created_at
+            FROM offers
+            WHERE is_active = true
+            ORDER BY created_at DESC
+        """)).fetchall()
+        offers = [dict(r._mapping) for r in result]
+        return {"offers": offers}
+    except:
+        return {"offers": []}
+
+@app.post("/offers")
+def create_offer(data: dict, db: Session = Depends(get_db)):
+    try:
+        title = data.get("title", "").strip()
+        description = data.get("description", "").strip()
+        discount_percent = data.get("discount_percent", 0)
+        emoji = data.get("emoji", "🎉")
+        if not title:
+            return {"error": "Title is required"}
+        db.execute(text("""
+            INSERT INTO offers (title, description, discount_percent, emoji, is_active)
+            VALUES (:title, :description, :discount_percent, :emoji, true)
+        """), {
+            "title": title,
+            "description": description,
+            "discount_percent": discount_percent,
+            "emoji": emoji
+        })
+        db.commit()
+        return {"message": "Offer created!", "success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.put("/offers/{offer_id}/toggle")
+def toggle_offer(offer_id: int, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("""
+            UPDATE offers SET is_active = NOT is_active WHERE id = :id
+        """), {"id": offer_id})
+        db.commit()
+        return {"message": "Toggled!"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.delete("/offers/{offer_id}")
+def delete_offer(offer_id: int, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("DELETE FROM offers WHERE id = :id"), {"id": offer_id})
+        db.commit()
+        return {"message": "Deleted!"}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ── STAFF STATS ──
+@app.get("/staff/{staff_id}/stats")
+def get_staff_stats(staff_id: int, db: Session = Depends(get_db)):
+    try:
+        packed = db.execute(text("""
+            SELECT COUNT(*) FROM orders 
+            WHERE packed_by LIKE :name
+            AND created_at >= date_trunc('month', CURRENT_DATE)
+        """), {"name": f"%{staff_id}%"}).scalar() or 0
+
+        collected = db.execute(text("""
+            SELECT COUNT(*) FROM orders 
+            WHERE status = 'collected'
+            AND created_at >= date_trunc('month', CURRENT_DATE)
+        """)).scalar() or 0
+
+        revenue = db.execute(text("""
+            SELECT COALESCE(SUM(total_amount), 0) FROM orders
+            WHERE status = 'collected'
+            AND created_at >= date_trunc('month', CURRENT_DATE)
+        """)).scalar() or 0
+
+        return {
+            "packed": int(packed),
+            "collected": int(collected),
+            "revenue": float(revenue)
+        }
+    except Exception as e:
+        return {"packed": 0, "collected": 0, "revenue": 0}
+
