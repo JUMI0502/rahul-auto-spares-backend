@@ -1114,11 +1114,9 @@ def search_by_barcode(
     if not product:
         return {"found": False, "product": None}
 
-    cols = ["id","name_en","name_te","sku",
-            "mrp","selling_price","stock_qty","barcode"]
     return {
         "found": True,
-        "product": dict(zip(cols, product))
+        "product": dict(product._mapping)
     }
 
 # ════════════════════════════════════
@@ -1253,10 +1251,8 @@ def get_products_by_brand(
         ORDER BY name_en
     """), {"prefix": f"{sku_prefix}%"}).fetchall()
 
-    cols = ["id","name_en","name_te","sku",
-            "mrp","selling_price","stock_qty"]
     return {
-        "products": [dict(zip(cols, p)) for p in products]
+        "products": [dict(r._mapping) for r in products]
     }
 
 # ════════════════════════════════════
