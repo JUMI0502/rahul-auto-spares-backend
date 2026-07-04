@@ -1096,7 +1096,8 @@ def search_by_barcode(
     db: Session = Depends(get_db)
 ):
     product = db.execute(text("""
-        SELECT * FROM products
+        SELECT id, name_en, name_te, name_hi, sku, mrp, selling_price, stock_qty
+        FROM products
         WHERE sku = :code
         OR barcode = :code
         LIMIT 1
@@ -1105,7 +1106,8 @@ def search_by_barcode(
     if not product:
         # Try partial match
         product = db.execute(text("""
-            SELECT * FROM products
+            SELECT id, name_en, name_te, name_hi, sku, mrp, selling_price, stock_qty
+            FROM products
             WHERE sku LIKE :code
             OR name_en LIKE :code
             LIMIT 1
