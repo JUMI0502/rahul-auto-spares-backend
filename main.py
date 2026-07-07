@@ -1573,3 +1573,61 @@ def get_staff_stats(staff_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         return {"packed": 0, "collected": 0, "revenue": 0}
 
+
+
+# ── REWARDS SYSTEM ──
+@app.get("/rewards")
+def get_rewards(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            SELECT id, name, description, points_required, is_active
+            FROM rewards WHERE is_active = true ORDER BY points_required ASC
+        """)).fetchall()
+        return {"rewards": [dict(r._mapping) for r in result]}
+    except:
+        return {"rewards": []}
+
+@app.post("/rewards")
+def add_reward(data: dict, db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            INSERT INTO rewards (name, description, points_required, is_active)
+            VALUES (:name, :description, :points_required, true)
+            RETURNING id
+        """), {
+            "name": data.get("name"),
+            "description": data.get("description", ""),
+            "points_required": data.get("points_required", 100)
+        })
+        db.commit()
+        row = result.fetchone()
+        return {"id": row[0], "success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.delete("/rewards/{reward_id}")
+def delete_reward(reward_id: int, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("UPDATE rewards SET is_active = false WHERE id = :id"), {"id": reward_id})
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/loyalty/{phone}/redeem-reward")
+def redeem_reward(phone: str, data: dict, db: Session = Depends(get_db)):
+    try:
+        reward_id = data.get("reward_id")
+        points = data.get("points", 0)
+        result = db.execute(text(
+            "SELECT points FROM loyalty_points WHERE phone = :phone"
+        ), {"phone": phone}).fetchone()
+        if not result or result[0] < points:
+            return {"success": False, "error": "Not enough points"}
+        db.execute(text("""
+            UPDATE loyalty_points SET points = points - :points WHERE phone = :phone
+        """), {"points": points, "phone": phone})
+        db.commit()
+        return {"success": True, "message": "Reward redeemed!"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
