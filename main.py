@@ -1721,3 +1721,79 @@ def add_activity_log(data: dict, db: Session = Depends(get_db)):
         return {"success": True}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── STAFF MANAGEMENT ──
+@app.get("/staff")
+def get_all_staff(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            SELECT id, name, role, phone, pin, salary
+            FROM staff_members
+            WHERE is_active = true
+            ORDER BY id ASC
+        """)).fetchall()
+        return {"staff": [dict(r._mapping) for r in result]}
+    except:
+        # Return default staff if table doesn't exist
+        return {"staff": [
+            {"id":1,"name":"Abdul Azeez Basheer","role":"owner","phone":"9642536653","pin":"1111"},
+            {"id":2,"name":"Chand Basha","role":"senior","phone":"9704098753","pin":"2222"},
+            {"id":3,"name":"Mabasha","role":"staff","phone":"8919480500","pin":"3333"},
+            {"id":4,"name":"Hussain Basha","role":"staff","phone":"7680861966","pin":"4444"},
+            {"id":5,"name":"Khaja","role":"staff","phone":"6301919019","pin":"5555"},
+        ]}
+
+@app.post("/staff")
+def add_staff(data: dict, db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            INSERT INTO staff_members (name, phone, role, pin, salary, is_active)
+            VALUES (:name, :phone, :role, :pin, :salary, true)
+            RETURNING id
+        """), {
+            "name": data.get("name"),
+            "phone": data.get("phone", ""),
+            "role": data.get("role", "staff"),
+            "pin": data.get("pin", "0000"),
+            "salary": data.get("salary", 12000),
+        })
+        db.commit()
+        row = result.fetchone()
+        return {"id": row[0], "success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.put("/staff/{staff_id}")
+def update_staff(staff_id: int, data: dict, db: Session = Depends(get_db)):
+    try:
+        if "pin" in data:
+            db.execute(text(
+                "UPDATE staff_members SET pin = :pin WHERE id = :id"
+            ), {"pin": data["pin"], "id": staff_id})
+        if "name" in data:
+            db.execute(text(
+                "UPDATE staff_members SET name = :name WHERE id = :id"
+            ), {"name": data["name"], "id": staff_id})
+        if "phone" in data:
+            db.execute(text(
+                "UPDATE staff_members SET phone = :phone WHERE id = :id"
+            ), {"phone": data["phone"], "id": staff_id})
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/staff/verify-pin")
+def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            SELECT id, name, role, phone, pin, salary
+            FROM staff_members
+            WHERE id = :staff_id AND pin = :pin AND is_active = true
+        """), {"staff_id": data.get("staff_id"), "pin": data.get("pin")}).fetchone()
+        if result:
+            return {"staff": dict(result._mapping)}
+        return {"staff": None}
+    except:
+        return {"staff": None}
