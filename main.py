@@ -321,9 +321,10 @@ def get_order_items(
 @app.get("/staff")
 def get_staff(db: Session = Depends(get_db)):
     result = db.execute(text("""
-        SELECT id, name, role, phone,
+        SELECT id, name, role, phone, pin,
                is_clocked_in, total_hours_today
         FROM staff_profiles
+        WHERE is_active = true
         ORDER BY id ASC
     """))
     staff = []
@@ -333,21 +334,19 @@ def get_staff(db: Session = Depends(get_db)):
             "name": row[1],
             "role": row[2],
             "phone": row[3],
-            "is_clocked_in": row[4],
-            "total_hours_today": float(row[5] or 0)
+            "pin": row[4],
+            "is_clocked_in": row[5],
+            "total_hours_today": float(row[6] or 0)
         })
     return {"staff": staff}
 
 @app.get("/staff/{staff_id}/profile")
-def get_staff_profile(
-    staff_id: int,
-    db: Session = Depends(get_db)
-):
+def get_staff_profile(staff_id: int, db: Session = Depends(get_db)):
     result = db.execute(text("""
         SELECT id, name, role, phone,
                photo_url, is_clocked_in,
                clock_in_time, total_hours_today
-        FROM staff_profiles WHERE id = :id
+        FROM staff_profiles WHERE id = :id AND is_active = true
     """), {"id": staff_id}).fetchone()
 
     if not result:
@@ -365,25 +364,67 @@ def get_staff_profile(
     }
 
 @app.put("/staff/{staff_id}/profile")
-def update_staff_profile(
-    staff_id: int,
-    data: dict,
-    db: Session = Depends(get_db)
-):
-    phone = data.get("phone")
-    photo_url = data.get("photo_url")
+def update_staff_profile(staff_id: int, data: dict, db: Session = Depends(get_db)):
     db.execute(text("""
         UPDATE staff_profiles
-        SET phone = COALESCE(:phone, phone),
+        SET name = COALESCE(:name, name),
+            phone = COALESCE(:phone, phone),
+            role = COALESCE(:role, role),
             photo_url = COALESCE(:photo_url, photo_url)
         WHERE id = :id
     """), {
-        "phone": phone,
-        "photo_url": photo_url,
+        "name": data.get("name"),
+        "phone": data.get("phone"),
+        "role": data.get("role"),
+        "photo_url": data.get("photo_url"),
         "id": staff_id
     })
     db.commit()
     return {"message": "Profile updated!"}
+
+@app.post("/staff")
+def add_staff(data: dict, db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            INSERT INTO staff_profiles (name, phone, role, pin, is_active)
+            VALUES (:name, :phone, :role, :pin, true)
+            RETURNING id
+        """), {
+            "name": data.get("name"),
+            "phone": data.get("phone", ""),
+            "role": data.get("role", "staff"),
+            "pin": data.get("pin", "0000"),
+        })
+        db.commit()
+        row = result.fetchone()
+        return {"id": row[0], "success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.delete("/staff/{staff_id}")
+def delete_staff(staff_id: int, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("""
+            UPDATE staff_profiles SET is_active = false WHERE id = :id
+        """), {"id": staff_id})
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/staff/verify-pin")
+def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("""
+            SELECT id, name, role, phone, pin
+            FROM staff_profiles
+            WHERE id = :staff_id AND pin = :pin AND is_active = true
+        """), {"staff_id": data.get("staff_id"), "pin": data.get("pin")}).fetchone()
+        if result:
+            return {"staff": dict(result._mapping)}
+        return {"staff": None}
+    except Exception:
+        return {"staff": None}
 
 @app.post("/staff/{staff_id}/clockin")
 def clock_in(
@@ -1721,79 +1762,3 @@ def add_activity_log(data: dict, db: Session = Depends(get_db)):
         return {"success": True}
     except Exception as e:
         return {"error": str(e)}
-
-
-# ── STAFF MANAGEMENT ──
-@app.get("/staff")
-def get_all_staff(db: Session = Depends(get_db)):
-    try:
-        result = db.execute(text("""
-            SELECT id, name, role, phone, pin, salary
-            FROM staff_members
-            WHERE is_active = true
-            ORDER BY id ASC
-        """)).fetchall()
-        return {"staff": [dict(r._mapping) for r in result]}
-    except:
-        # Return default staff if table doesn't exist
-        return {"staff": [
-            {"id":1,"name":"Abdul Azeez Basheer","role":"owner","phone":"9642536653","pin":"1111"},
-            {"id":2,"name":"Chand Basha","role":"senior","phone":"9704098753","pin":"2222"},
-            {"id":3,"name":"Mabasha","role":"staff","phone":"8919480500","pin":"3333"},
-            {"id":4,"name":"Hussain Basha","role":"staff","phone":"7680861966","pin":"4444"},
-            {"id":5,"name":"Khaja","role":"staff","phone":"6301919019","pin":"5555"},
-        ]}
-
-@app.post("/staff")
-def add_staff(data: dict, db: Session = Depends(get_db)):
-    try:
-        result = db.execute(text("""
-            INSERT INTO staff_members (name, phone, role, pin, salary, is_active)
-            VALUES (:name, :phone, :role, :pin, :salary, true)
-            RETURNING id
-        """), {
-            "name": data.get("name"),
-            "phone": data.get("phone", ""),
-            "role": data.get("role", "staff"),
-            "pin": data.get("pin", "0000"),
-            "salary": data.get("salary", 12000),
-        })
-        db.commit()
-        row = result.fetchone()
-        return {"id": row[0], "success": True}
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.put("/staff/{staff_id}")
-def update_staff(staff_id: int, data: dict, db: Session = Depends(get_db)):
-    try:
-        if "pin" in data:
-            db.execute(text(
-                "UPDATE staff_members SET pin = :pin WHERE id = :id"
-            ), {"pin": data["pin"], "id": staff_id})
-        if "name" in data:
-            db.execute(text(
-                "UPDATE staff_members SET name = :name WHERE id = :id"
-            ), {"name": data["name"], "id": staff_id})
-        if "phone" in data:
-            db.execute(text(
-                "UPDATE staff_members SET phone = :phone WHERE id = :id"
-            ), {"phone": data["phone"], "id": staff_id})
-        db.commit()
-        return {"success": True}
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.post("/staff/verify-pin")
-def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
-    try:
-        result = db.execute(text("""
-            SELECT id, name, role, phone, pin, salary
-            FROM staff_members
-            WHERE id = :staff_id AND pin = :pin AND is_active = true
-        """), {"staff_id": data.get("staff_id"), "pin": data.get("pin")}).fetchone()
-        if result:
-            return {"staff": dict(result._mapping)}
-        return {"staff": None}
-    except:
-        return {"staff": None}
