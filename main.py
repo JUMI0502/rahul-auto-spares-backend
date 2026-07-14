@@ -198,6 +198,57 @@ def get_customer_orders(
         })
     return {"orders": orders}
 
+@app.post("/staff/{staff_id}/register-push-token")
+def register_push_token(staff_id: int, data: dict, db: Session = Depends(get_db)):
+    token = data.get("push_token")
+    if not token:
+        return {"error": "push_token is required"}
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS staff_push_tokens (
+                id SERIAL PRIMARY KEY,
+                staff_id INTEGER,
+                push_token TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        db.execute(text("""
+            INSERT INTO staff_push_tokens (staff_id, push_token)
+            VALUES (:sid, :token)
+            ON CONFLICT (push_token) DO UPDATE SET staff_id = :sid
+        """), {"sid": staff_id, "token": token})
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def send_new_order_push(custom_id: str, total_amount: float, db: Session):
+    try:
+        tokens = db.execute(text(
+            "SELECT DISTINCT push_token FROM staff_push_tokens"
+        )).fetchall()
+        if not tokens:
+            return
+        messages = [{
+            "to": row[0],
+            "sound": "default",
+            "priority": "high",
+            "title": "New Order!",
+            "body": f"Order {custom_id} - Rs.{total_amount:.0f}",
+            "data": {"custom_id": custom_id, "type": "new_order"},
+            "channelId": "new-orders",
+        } for row in tokens]
+        requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=messages,
+            headers={"Content-Type": "application/json"},
+            timeout=5
+        )
+    except Exception:
+        pass
+
+
 @app.post("/orders")
 def create_order(
     data: dict,
@@ -254,6 +305,7 @@ def create_order(
         })
 
     db.commit()
+    send_new_order_push(custom_id, total_amount, db)
     return {
         "message": "Order created!",
         "order_id": order_id,
