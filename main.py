@@ -246,7 +246,7 @@ def send_new_order_push(custom_id: str, total_amount: float, db: Session):
             "channelId": "new-orders",
         } for row in tokens]
         print(f"[PUSH DEBUG] Sending to Expo push API: {messages}")
-        resp = requests.post(
+        resp = http_requests.post(
             "https://exp.host/--/api/v2/push/send",
             json=messages,
             headers={"Content-Type": "application/json"},
