@@ -1235,14 +1235,13 @@ def broadcast_notification(
     body = data.get("body", "")
 
     tokens = db.execute(text("""
-        SELECT token FROM customer_tokens
+        SELECT DISTINCT token FROM customer_tokens
         WHERE token IS NOT NULL
     """)).fetchall()
 
     if not tokens:
         return {"sent": 0}
 
-    import httpx
     messages = [
         {
             "to": t[0],
@@ -1253,15 +1252,21 @@ def broadcast_notification(
         for t in tokens
     ]
 
-    # Send in batches of 100
     sent = 0
     for i in range(0, len(messages), 100):
         batch = messages[i:i+100]
-        httpx.post(
-            "https://exp.host/--/api/v2/push/send",
-            json=batch
-        )
-        sent += len(batch)
+        try:
+            http_requests.post(
+                "https://exp.host/--/api/v2/push/send",
+                json=batch,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            sent += len(batch)
+        except Exception:
+            pass
+
+    return {"sent": sent}
 
     return {"sent": sent, "total_tokens": len(tokens)}
 # ════════════════════════════════════
@@ -1449,41 +1454,6 @@ async def upload_product_image(product_id: int, request: Request, db=Depends(get
         return {"error": str(e)}
 
 # ── BROADCAST PUSH TO ALL CUSTOMERS ──
-@app.post("/notify/broadcast")
-async def broadcast_push(request: Request, db=Depends(get_db)):
-    try:
-        body = await request.json()
-        title = body.get("title", "New Rahul Auto Spares")
-        msg_body = body.get("body", "")
-
-        tokens = db.execute(
-            text("SELECT DISTINCT token FROM customer_tokens WHERE token IS NOT NULL")
-        ).fetchall()
-
-        if not tokens:
-            return {"sent": 0}
-
-        sent = 0
-        for row in tokens:
-            token = row[0]
-            try:
-                requests.post(
-                    "https://exp.host/--/api/v2/push/send",
-                    json={
-                        "to": token,
-                        "title": title,
-                        "body": msg_body,
-                        "sound": "default",
-                    },
-                    headers={"Content-Type": "application/json"}
-                )
-                sent += 1
-            except:
-                pass
-
-        return {"sent": sent}
-    except Exception as e:
-        return {"sent": 0, "error": str(e)}
 # ── OFFERS / DEALS ──
 @app.get("/offers/all")
 def get_all_offers(db: Session = Depends(get_db)):
