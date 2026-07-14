@@ -203,6 +203,7 @@ def register_push_token(staff_id: int, data: dict, db: Session = Depends(get_db)
     token = data.get("push_token")
     if not token:
         return {"error": "push_token is required"}
+    print(f"[PUSH DEBUG] Registering token for staff_id={staff_id}, token={token[:30]}...")
     try:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS staff_push_tokens (
@@ -218,17 +219,22 @@ def register_push_token(staff_id: int, data: dict, db: Session = Depends(get_db)
             ON CONFLICT (push_token) DO UPDATE SET staff_id = :sid
         """), {"sid": staff_id, "token": token})
         db.commit()
+        print(f"[PUSH DEBUG] Token saved successfully for staff_id={staff_id}")
         return {"success": True}
     except Exception as e:
+        print(f"[PUSH DEBUG] ERROR saving token: {e}")
         return {"error": str(e)}
 
 
 def send_new_order_push(custom_id: str, total_amount: float, db: Session):
+    print(f"[PUSH DEBUG] send_new_order_push called for order {custom_id}")
     try:
         tokens = db.execute(text(
             "SELECT DISTINCT push_token FROM staff_push_tokens"
         )).fetchall()
+        print(f"[PUSH DEBUG] Found {len(tokens)} registered push token(s)")
         if not tokens:
+            print("[PUSH DEBUG] No tokens registered - nothing to send")
             return
         messages = [{
             "to": row[0],
@@ -239,14 +245,16 @@ def send_new_order_push(custom_id: str, total_amount: float, db: Session):
             "data": {"custom_id": custom_id, "type": "new_order"},
             "channelId": "new-orders",
         } for row in tokens]
-        requests.post(
+        print(f"[PUSH DEBUG] Sending to Expo push API: {messages}")
+        resp = requests.post(
             "https://exp.host/--/api/v2/push/send",
             json=messages,
             headers={"Content-Type": "application/json"},
             timeout=5
         )
-    except Exception:
-        pass
+        print(f"[PUSH DEBUG] Expo push API response: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"[PUSH DEBUG] ERROR sending push: {e}")
 
 
 @app.post("/orders")
