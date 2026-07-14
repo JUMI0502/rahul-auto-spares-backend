@@ -1226,43 +1226,6 @@ def search_by_barcode(
 # PUSH NOTIFICATIONS
 # ════════════════════════════════════
 
-@app.post("/notify/order-ready/{order_id}")
-def notify_order_ready(
-    order_id: int,
-    db: Session = Depends(get_db)
-):
-    order = db.execute(text("""
-        SELECT customer_phone, custom_id,
-               total_amount
-        FROM orders WHERE id = :id
-    """), {"id": order_id}).fetchone()
-
-    if not order:
-        return {"sent": False}
-
-    token = db.execute(text("""
-        SELECT token FROM customer_tokens
-        WHERE phone = :phone
-        LIMIT 1
-    """), {"phone": order[0]}).fetchone()
-
-    if not token:
-        return {"sent": False, "reason": "No token"}
-
-    import httpx
-    response = httpx.post(
-        "https://exp.host/--/api/v2/push/send",
-        json={
-            "to": token[0],
-            "title": "🎉 Order Ready for Pickup!",
-            "body": f"Order {order[1]} · ₹{order[2]} is ready! Come collect it now.",
-            "data": {"order_id": order_id},
-            "sound": "default",
-            "priority": "high"
-        }
-    )
-    return {"sent": True}
-
 @app.post("/notify/broadcast")
 def broadcast_notification(
     data: dict,
@@ -1484,56 +1447,6 @@ async def upload_product_image(product_id: int, request: Request, db=Depends(get
         return {"image_url": public_url, "success": True}
     except Exception as e:
         return {"error": str(e)}
-
-# ── NOTIFY ORDER READY (UPDATE THE EXISTING ONE) ──
-# Find your existing /notify/order-ready/{order_id} and replace it with this:
-@app.post("/notify/order-ready/{order_id}")
-async def notify_order_ready(order_id: int, db=Depends(get_db)):
-    try:
-        # Get order
-        order = db.execute(text(
-            "SELECT * FROM orders WHERE id = :id"
-        ), {"id": order_id}).fetchone()
-        if not order:
-            return {"sent": False, "error": "Order not found"}
-
-        order = dict(order._mapping)
-        phone = order.get("customer_phone", "")
-        if not phone:
-            return {"sent": False, "error": "No customer phone"}
-
-        # Get push token
-        row = db.execute(text(
-            "SELECT token FROM customer_tokens WHERE phone = :phone"
-        ), {"phone": phone}).fetchone()
-        if not row:
-            return {"sent": False, "error": "No push token"}
-
-        token = row[0]
-        order_id_str = order.get("custom_id") or f"RAS-{order_id}"
-
-        # Send via Expo Push API
-        payload = {
-            "to": token,
-            "title": "🎉 Your order is Ready!",
-            "body": f"Order {order_id_str} is ready for pickup!\n📍 New Rahul Auto Spares, Nandyal",
-            "data": {"order_id": order_id, "type": "order_ready"},
-            "sound": "default",
-            "priority": "high",
-            "badge": 1,
-        }
-        r = requests.post(
-            "https://exp.host/--/api/v2/push/send",
-            json=payload,
-            headers={
-                "Accept": "application/json",
-                "Accept-Encoding": "gzip, deflate",
-                "Content-Type": "application/json",
-            }
-        )
-        return {"sent": True, "status": r.status_code, "token": token[:20]+"..."}
-    except Exception as e:
-        return {"sent": False, "error": str(e)}
 
 # ── BROADCAST PUSH TO ALL CUSTOMERS ──
 @app.post("/notify/broadcast")
