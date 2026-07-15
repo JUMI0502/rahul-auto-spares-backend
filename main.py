@@ -292,28 +292,55 @@ def create_order(
     })
     order_id = result.fetchone()[0]
 
+    # Validate stock availability BEFORE making any changes
+    insufficient = []
+    for item in items:
+        pid = item.get("id")
+        qty = item.get("qty", 1)
+        stock_row = db.execute(text(
+            "SELECT stock_qty, name_en FROM products WHERE id = :pid"
+        ), {"pid": pid}).fetchone()
+        if not stock_row or stock_row[0] < qty:
+            insufficient.append({
+                "product_id": pid,
+                "name": stock_row[1] if stock_row else "Unknown item",
+                "available": stock_row[0] if stock_row else 0,
+                "requested": qty
+            })
+
+    if insufficient:
+        db.rollback()
+        return {
+            "error": "Insufficient stock",
+            "insufficient_items": insufficient
+        }
+
     for item in items:
         price = item.get("mechanic_price") or \
                 item.get("selling_price", 0)
+        pid = item.get("id")
+        qty = item.get("qty", 1)
+
         db.execute(text("""
             INSERT INTO order_items
             (order_id, product_id, qty, price)
             VALUES (:oid, :pid, :qty, :price)
         """), {
             "oid": order_id,
-            "pid": item.get("id"),
-            "qty": item.get("qty", 1),
+            "pid": pid,
+            "qty": qty,
             "price": price
         })
 
-        db.execute(text("""
+        result = db.execute(text("""
             UPDATE products
-            SET stock_qty = GREATEST(0, stock_qty - :qty)
-            WHERE id = :pid
-        """), {
-            "qty": item.get("qty", 1),
-            "pid": item.get("id")
-        })
+            SET stock_qty = stock_qty - :qty
+            WHERE id = :pid AND stock_qty >= :qty
+        """), {"qty": qty, "pid": pid})
+
+        if result.rowcount == 0:
+            db.rollback()
+            return {"error": "Stock changed during order - please try again"}
 
     db.commit()
     send_new_order_push(custom_id, total_amount, db)
