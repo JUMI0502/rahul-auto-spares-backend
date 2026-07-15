@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -35,6 +36,17 @@ def get_db():
 # ════════════════════════════════════
 # HEALTH CHECK
 # ════════════════════════════════════
+
+API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "zFWqAraDGYhsNzIe76vXOm0hifitH1bxLmQ6S-8qeN8")
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    if request.url.path == "/" or request.method == "HEAD":
+        return await call_next(request)
+    provided_key = request.headers.get("x-api-key")
+    if provided_key != API_SECRET_KEY:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized - missing or invalid API key"})
+    return await call_next(request)
 
 @app.get("/")
 def root():
