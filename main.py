@@ -271,6 +271,25 @@ def create_order(
     customer_phone = data.get("customer_phone", "")
     items = data.get("items", [])
 
+    # Duplicate protection: reject if an identical order was just placed
+    # by the same customer in the last 15 seconds (catches double-taps
+    # and network retries without needing a client-side idempotency key)
+    recent_dupe = db.execute(text("""
+        SELECT id, custom_id FROM orders
+        WHERE customer_phone = :phone
+          AND total_amount = :total
+          AND created_at > NOW() - INTERVAL '15 seconds'
+        ORDER BY created_at DESC LIMIT 1
+    """), {"phone": customer_phone, "total": total_amount}).fetchone()
+
+    if recent_dupe:
+        return {
+            "message": "Order already placed!",
+            "order_id": recent_dupe[0],
+            "custom_id": recent_dupe[1],
+            "duplicate_prevented": True
+        }
+
     count = db.execute(
         text("SELECT COUNT(*) FROM orders")
     ).fetchone()[0]
