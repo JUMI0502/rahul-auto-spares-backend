@@ -39,13 +39,31 @@ def get_db():
 
 API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "zFWqAraDGYhsNzIe76vXOm0hifitH1bxLmQ6S-8qeN8")
 
+import time
+from collections import defaultdict
+
+_rate_limit_buckets = defaultdict(list)
+RATE_LIMIT_MAX_REQUESTS = 100
+RATE_LIMIT_WINDOW_SECONDS = 60
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     if request.url.path == "/" or request.method == "HEAD":
         return await call_next(request)
+
     provided_key = request.headers.get("x-api-key")
     if provided_key != API_SECRET_KEY:
         return JSONResponse(status_code=401, content={"error": "Unauthorized - missing or invalid API key"})
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    bucket = _rate_limit_buckets[client_ip]
+    while bucket and bucket[0] < now - RATE_LIMIT_WINDOW_SECONDS:
+        bucket.pop(0)
+    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+        return JSONResponse(status_code=429, content={"error": "Too many requests - please slow down"})
+    bucket.append(now)
+
     return await call_next(request)
 
 @app.get("/")
@@ -510,6 +528,21 @@ def add_staff(data: dict, db: Session = Depends(get_db)):
         return {"id": row[0], "success": True}
     except Exception as e:
         return {"error": str(e)}
+
+@app.post("/staff/{staff_id}/reset-pin")
+def reset_staff_pin(staff_id: int, data: dict, db: Session = Depends(get_db)):
+    new_pin = data.get("pin")
+    if not new_pin or len(str(new_pin)) != 4:
+        return {"error": "A valid 4-digit PIN is required"}
+    try:
+        db.execute(text(
+            "UPDATE staff_profiles SET pin = :pin WHERE id = :id"
+        ), {"pin": str(new_pin), "id": staff_id})
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 @app.delete("/staff/{staff_id}")
 def delete_staff(staff_id: int, db: Session = Depends(get_db)):
