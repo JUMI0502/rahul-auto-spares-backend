@@ -258,6 +258,7 @@ def send_new_order_push(custom_id: str, total_amount: float, db: Session):
             timeout=5
         )
     except Exception as e:
+        pass
 
 
 @app.post("/orders")
