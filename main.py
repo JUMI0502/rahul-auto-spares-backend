@@ -604,6 +604,11 @@ def clock_out(
         now = datetime.now()
         diff = now - result[0].replace(tzinfo=None)
         hours = round(diff.total_seconds() / 3600, 2)
+        # Sanity cap: a shift can't realistically exceed 24 hours.
+        # A larger value means a stale clock-in from a crash/restart -
+        # cap it so it doesn't overflow the database column.
+        if hours > 24 or hours < 0:
+            hours = 0
 
     db.execute(text("""
         UPDATE staff_profiles
