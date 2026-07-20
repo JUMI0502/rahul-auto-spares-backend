@@ -510,6 +510,15 @@ def update_staff_profile(staff_id: int, data: dict, db: Session = Depends(get_db
     db.commit()
     return {"message": "Profile updated!"}
 
+@app.post("/staff/{staff_id}/reset-hours")
+def reset_staff_hours(staff_id: int, db: Session = Depends(get_db)):
+    db.execute(text("""
+        UPDATE staff_profiles SET total_hours_today = 0 WHERE id = :id
+    """), {"id": staff_id})
+    db.commit()
+    return {"message": "Hours reset"}
+
+
 @app.post("/staff")
 def add_staff(data: dict, db: Session = Depends(get_db)):
     try:
