@@ -164,7 +164,16 @@ def update_stock(
     except:
         pass
     db.commit()
-    return {"message": "Stock updated!", "new_qty": new_qty, "rows_matched": rows_matched, "product_id_requested": product_id}
+    readback = db.execute(text(
+        "SELECT stock_qty FROM products WHERE id = :id"
+    ), {"id": product_id}).fetchone()
+    return {
+        "message": "Stock updated!",
+        "new_qty": new_qty,
+        "rows_matched": rows_matched,
+        "product_id_requested": product_id,
+        "readback_same_session": readback[0] if readback else None
+    }
 
 # ════════════════════════════════════
 # ORDERS
