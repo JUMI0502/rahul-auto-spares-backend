@@ -70,6 +70,18 @@ async def require_api_key(request: Request, call_next):
 def root():
     return {"message": "Rahul Auto Spares API Running!"}
 
+@app.get("/debug/db-identity")
+def db_identity(db: Session = Depends(get_db)):
+    result = db.execute(text(
+        "SELECT current_database(), inet_server_addr()::text, current_user, now()"
+    )).fetchone()
+    return {
+        "database": result[0],
+        "server_addr": result[1],
+        "user": result[2],
+        "server_time": str(result[3])
+    }
+
 # ════════════════════════════════════
 # PRODUCTS
 # ════════════════════════════════════
