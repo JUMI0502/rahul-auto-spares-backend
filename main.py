@@ -70,17 +70,6 @@ async def require_api_key(request: Request, call_next):
 def root():
     return {"message": "Rahul Auto Spares API Running!"}
 
-@app.get("/debug/db-identity")
-def db_identity(db: Session = Depends(get_db)):
-    result = db.execute(text(
-        "SELECT current_database(), inet_server_addr()::text, current_user, now()"
-    )).fetchone()
-    return {
-        "database": result[0],
-        "server_addr": result[1],
-        "user": result[2],
-        "server_time": str(result[3])
-    }
 
 # ════════════════════════════════════
 # PRODUCTS
@@ -156,36 +145,34 @@ def update_stock(
     db: Session = Depends(get_db)
 ):
     new_qty = update.get("stock_qty", 0)
-    staff_id = update.get("staff_id")
-    result = db.execute(text("""
+
+    old_row = db.execute(text(
+        "SELECT stock_qty FROM products WHERE id = :id"
+    ), {"id": product_id}).fetchone()
+    old_qty = old_row[0] if old_row else 0
+
+    db.execute(text("""
         UPDATE products
         SET stock_qty = :qty WHERE id = :id
     """), {"qty": new_qty, "id": product_id})
-    rows_matched = result.rowcount
+    db.commit()
+
+    # Log the movement in its own transaction - if this fails,
+    # it must NEVER be able to roll back the stock update above.
     try:
         db.execute(text("""
             INSERT INTO stock_movements
-            (product_id, qty_change, new_qty, staff_id, reason)
-            VALUES (:pid, :qc, :nq, :sid, 'manual_update')
+            (product_id, qty_change, reason)
+            VALUES (:pid, :qc, 'manual_update')
         """), {
             "pid": product_id,
-            "qc": new_qty,
-            "nq": new_qty,
-            "sid": staff_id
+            "qc": new_qty - old_qty
         })
-    except:
-        pass
-    db.commit()
-    readback = db.execute(text(
-        "SELECT stock_qty FROM products WHERE id = :id"
-    ), {"id": product_id}).fetchone()
-    return {
-        "message": "Stock updated!",
-        "new_qty": new_qty,
-        "rows_matched": rows_matched,
-        "product_id_requested": product_id,
-        "readback_same_session": readback[0] if readback else None
-    }
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    return {"message": "Stock updated!", "new_qty": new_qty}
 
 # ════════════════════════════════════
 # ORDERS
