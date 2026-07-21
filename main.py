@@ -145,10 +145,11 @@ def update_stock(
 ):
     new_qty = update.get("stock_qty", 0)
     staff_id = update.get("staff_id")
-    db.execute(text("""
+    result = db.execute(text("""
         UPDATE products
         SET stock_qty = :qty WHERE id = :id
     """), {"qty": new_qty, "id": product_id})
+    rows_matched = result.rowcount
     try:
         db.execute(text("""
             INSERT INTO stock_movements
@@ -163,7 +164,7 @@ def update_stock(
     except:
         pass
     db.commit()
-    return {"message": "Stock updated!", "new_qty": new_qty}
+    return {"message": "Stock updated!", "new_qty": new_qty, "rows_matched": rows_matched, "product_id_requested": product_id}
 
 # ════════════════════════════════════
 # ORDERS
