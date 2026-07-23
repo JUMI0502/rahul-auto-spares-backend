@@ -37,7 +37,9 @@ def get_db():
 # HEALTH CHECK
 # ════════════════════════════════════
 
-API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "zFWqAraDGYhsNzIe76vXOm0hifitH1bxLmQ6S-8qeN8")
+API_SECRET_KEY = os.environ.get("API_SECRET_KEY")
+if not API_SECRET_KEY:
+    raise RuntimeError("API_SECRET_KEY environment variable must be set - refusing to start without it")
 
 import time
 from collections import defaultdict
