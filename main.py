@@ -1052,6 +1052,35 @@ def get_all_mechanics(db: Session = Depends(get_db)):
         ),
     }
 
+@app.put("/mechanics/{mechanic_id}")
+def update_mechanic(mechanic_id: int, data: dict, db: Session = Depends(get_db)):
+    db.execute(text("""
+        UPDATE mechanic_profiles
+        SET name = COALESCE(:name, name),
+            phone = COALESCE(:phone, phone),
+            shop_name = COALESCE(:shop_name, shop_name),
+            area = COALESCE(:area, area)
+        WHERE id = :id
+    """), {
+        "name": data.get("name"),
+        "phone": data.get("phone"),
+        "shop_name": data.get("shop_name"),
+        "area": data.get("area"),
+        "id": mechanic_id
+    })
+    db.commit()
+    return {"message": "Mechanic updated!"}
+
+
+@app.delete("/mechanics/{mechanic_id}")
+def delete_mechanic(mechanic_id: int, db: Session = Depends(get_db)):
+    db.execute(text(
+        "DELETE FROM mechanic_profiles WHERE id = :id"
+    ), {"id": mechanic_id})
+    db.commit()
+    return {"message": "Mechanic deleted!"}
+
+
 @app.put("/mechanics/{mechanic_id}/approve")
 def approve_mechanic(
     mechanic_id: int,
