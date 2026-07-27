@@ -1,0 +1,14 @@
+*.backup*
+*.debugbackup
+fix_*.py
+add_push_debug_logging.py
+remove_push_debug_logging.py
+test_rahul.db
+*.backup*
+*.debugbackup
+fix_*.py
+add_push_debug_logging.py
+remove_push_debug_logging.py
+test_rahul.db
+add_*.py
+remove_*.py
