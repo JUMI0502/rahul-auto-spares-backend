@@ -82,7 +82,7 @@ def get_products(db: Session = Depends(get_db)):
     result = db.execute(text("""
         SELECT id, name_en, name_te, name_hi,
                sku, mrp, selling_price,
-               stock_qty, category_id
+               stock_qty, category_id, is_oem
         FROM products
         ORDER BY sku ASC
     """))
@@ -97,7 +97,8 @@ def get_products(db: Session = Depends(get_db)):
             "mrp": float(row[5] or 0),
             "selling_price": float(row[6] or 0),
             "stock_qty": row[7] or 0,
-            "category_id": row[8]
+            "category_id": row[8],
+            "is_oem": bool(row[9]) if row[9] is not None else False
         })
     return {"products": products}
 
@@ -1421,6 +1422,7 @@ def add_product(
     mrp = float(data.get("mrp", 0))
     selling_price = float(data.get("selling_price", 0))
     stock_qty = int(data.get("stock_qty", 0))
+    is_oem = bool(data.get("is_oem", False))
 
     if not name_en or not sku or mrp <= 0:
         return {"error": "Name, SKU and MRP required"}
@@ -1434,15 +1436,26 @@ def add_product(
 
     db.execute(text("""
         INSERT INTO products
-        (name_en, name_te, sku, mrp, selling_price, stock_qty)
-        VALUES (:name_en, :name_te, :sku, :mrp, :sp, :sq)
+        (name_en, name_te, sku, mrp, selling_price, stock_qty, is_oem)
+        VALUES (:name_en, :name_te, :sku, :mrp, :sp, :sq, :is_oem)
     """), {
         "name_en": name_en, "name_te": name_te,
         "sku": sku, "mrp": mrp,
-        "sp": selling_price, "sq": stock_qty
+        "sp": selling_price, "sq": stock_qty,
+        "is_oem": is_oem
     })
     db.commit()
     return {"message": "Product added!", "sku": sku}
+
+
+@app.put("/products/{product_id}/oem")
+def update_oem_status(product_id: int, data: dict, db: Session = Depends(get_db)):
+    is_oem = bool(data.get("is_oem", False))
+    db.execute(text("""
+        UPDATE products SET is_oem = :is_oem WHERE id = :id
+    """), {"is_oem": is_oem, "id": product_id})
+    db.commit()
+    return {"message": "Updated!", "is_oem": is_oem}
 
 # ════════════════════════════════════
 # PRODUCTS BY BRAND
