@@ -301,6 +301,15 @@ def create_order(
     customer_name = data.get("customer_name", "")
     customer_phone = data.get("customer_phone", "")
     items = data.get("items", [])
+    referred_by_phone = data.get("referred_by_phone", "").strip()
+
+    # Check if this is the customer's first-ever order (for referral bonus)
+    is_first_order = False
+    if referred_by_phone and referred_by_phone != customer_phone:
+        prior_count = db.execute(text(
+            "SELECT COUNT(*) FROM orders WHERE customer_phone = :phone"
+        ), {"phone": customer_phone}).fetchone()[0]
+        is_first_order = (prior_count == 0)
 
     # Duplicate protection: reject if an identical order was just placed
     # by the same customer in the last 15 seconds (catches double-taps
@@ -394,10 +403,40 @@ def create_order(
 
     db.commit()
     send_new_order_push(custom_id, total_amount, db)
+
+    referral_bonus_awarded = False
+    if is_first_order and referred_by_phone:
+        try:
+            REFERRER_BONUS = 50
+            NEW_CUSTOMER_BONUS = 20
+            db.execute(text("""
+                INSERT INTO customer_loyalty_points
+                (phone, points, total_earned, updated_at)
+                VALUES (:phone, :points, :points, NOW())
+                ON CONFLICT (phone) DO UPDATE
+                SET points = customer_loyalty_points.points + :points,
+                    total_earned = customer_loyalty_points.total_earned + :points,
+                    updated_at = NOW()
+            """), {"phone": referred_by_phone, "points": REFERRER_BONUS})
+            db.execute(text("""
+                INSERT INTO customer_loyalty_points
+                (phone, points, total_earned, updated_at)
+                VALUES (:phone, :points, :points, NOW())
+                ON CONFLICT (phone) DO UPDATE
+                SET points = customer_loyalty_points.points + :points,
+                    total_earned = customer_loyalty_points.total_earned + :points,
+                    updated_at = NOW()
+            """), {"phone": customer_phone, "points": NEW_CUSTOMER_BONUS})
+            db.commit()
+            referral_bonus_awarded = True
+        except Exception:
+            db.rollback()
+
     return {
         "message": "Order created!",
         "order_id": order_id,
-        "custom_id": custom_id
+        "custom_id": custom_id,
+        "referral_bonus_awarded": referral_bonus_awarded
     }
 
 @app.put("/orders/{order_id}")
