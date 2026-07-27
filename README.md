@@ -1,47 +1,66 @@
-# New Rahul Auto Spares — FastAPI Backend
+# Rahul Auto Spares — Backend API
 
-Live production backend for a two-wheeler spare parts store in Nandyal, Andhra Pradesh.
+FastAPI backend for the New Rahul Auto Spares customer and store apps.
 
-## Live API
-`https://rahul-auto-spares-backend.onrender.com`
+## Live URL
+```
+https://rahul-auto-spares-backend.onrender.com
+```
 
-## Tech Stack
-- **FastAPI** + SQLAlchemy + PostgreSQL (Supabase)
-- **Deployed** on Render (auto-deploy from GitHub)
-- **42+ pytest tests** with SQLite fixtures
+## Authentication
+Every endpoint (except `GET /`) requires an API key header:
+```
+x-api-key: <see team lead for current key>
+```
+Requests without a valid key return `401 Unauthorized`.
 
-## Key Endpoints
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | /products | All spare parts catalog |
-| POST | /products | Add new product |
-| GET | /products/barcode/{code} | Search by barcode/SKU |
-| GET | /products/brand/{prefix} | Filter by brand |
-| POST | /orders | Place new order |
-| PUT | /orders/{id} | Update order status |
-| GET | /customers/analytics | Top spenders, monthly revenue |
-| POST | /notify/broadcast | Push notification to all customers |
-| GET | /reports/daily-summary | Daily sales summary |
+## Rate Limiting
+100 requests per minute per IP address. Exceeding this returns `429 Too Many Requests`.
 
-## Run Locally
+## Local Setup
 ```bash
-pip install -r requirements.txt
+git clone <repo-url>
+cd rahul-auto-spares-backend
+pip install -r requirements.txt --break-system-packages
+```
+
+Create a `.env` file (not committed) with:
+```
+DATABASE_URL=<Supabase Postgres connection string — see team lead>
+API_SECRET_KEY=<see team lead>
+```
+
+Run locally:
+```bash
 uvicorn main:app --reload
 ```
 
-## Run Tests
-```bash
-pip install pytest httpx pytest-mock
-python -m pytest tests/ -v
-```
+## Database
+PostgreSQL hosted on Supabase (free tier). Note: free tier pauses after 7 days
+of no activity — if the API seems unresponsive, check the Supabase dashboard
+and click "Resume" if paused. No automated backups on free tier; a manual
+backup should be taken periodically (`pg_dump`).
 
-## Test Coverage
-- Product CRUD and barcode search
-- Order lifecycle (new → packing → ready → collected)
-- Customer analytics and revenue calculations  
-- Push notification broadcast
-- SQLite NullPool isolation between tests
+## Testing Notes / Known Staff PINs
+| Name | Role | PIN |
+|---|---|---|
+| Abdul Azeess | Owner | 9642 |
+| Chand Basha | Senior | 9704 |
+| Masha | Staff | 8919 |
+| Hussain Basha | Staff | 4444 |
+| Khaja | Staff | 1234 |
 
-## Apps Using This API
-- **Customer App** — Browse parts, place orders, loyalty points
-- **Store Staff App** — Manage orders, inventory, analytics
+Test customer phone number used during development: `1122334455`
+
+## Known Limitations
+- No automated tests yet
+- CORS is permissive (`allow_origins=["*"]`) — acceptable since mobile clients
+  don't send Origin headers, but worth restricting if a web client is ever added
+- Product catalog's `is_oem` field defaults to `false` for all existing
+  products until manually classified by staff via the store app
+- Debug/patch scripts (`add_*.py`, `fix_*.py`) may appear untracked locally —
+  these are development scratch files, safe to ignore, not part of the app
+
+## Reporting Bugs
+Please include: endpoint hit, request body sent, expected vs actual response,
+and timestamp (helps cross-reference Render logs).
