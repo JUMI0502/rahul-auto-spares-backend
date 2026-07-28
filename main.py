@@ -1733,6 +1733,71 @@ def get_inventory_forecast(days_threshold: int = 7, db: Session = Depends(get_db
 
 
 # ════════════════════════════════════
+# CUSTOMER PIN VERIFICATION
+# ════════════════════════════════════
+
+@app.get("/customers/{phone}/has-pin")
+def check_customer_has_pin(phone: str, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS customer_profiles (
+                phone TEXT PRIMARY KEY,
+                name TEXT,
+                pin TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    result = db.execute(text(
+        "SELECT name FROM customer_profiles WHERE phone = :phone"
+    ), {"phone": phone}).fetchone()
+
+    return {"has_pin": result is not None, "name": result[0] if result else None}
+
+
+@app.post("/customers/set-pin")
+def set_customer_pin(data: dict, db: Session = Depends(get_db)):
+    phone = data.get("phone", "").strip()
+    name = data.get("name", "").strip()
+    pin = data.get("pin", "").strip()
+
+    if not phone or not name or len(pin) != 4 or not pin.isdigit():
+        return {"error": "Valid phone, name, and 4-digit PIN required"}
+
+    existing = db.execute(text(
+        "SELECT phone FROM customer_profiles WHERE phone = :phone"
+    ), {"phone": phone}).fetchone()
+
+    if existing:
+        return {"error": "PIN already set for this phone. Please log in instead."}
+
+    db.execute(text("""
+        INSERT INTO customer_profiles (phone, name, pin)
+        VALUES (:phone, :name, :pin)
+    """), {"phone": phone, "name": name, "pin": pin})
+    db.commit()
+    return {"message": "PIN created!", "name": name}
+
+
+@app.post("/customers/verify-pin")
+def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
+    phone = data.get("phone", "").strip()
+    pin = data.get("pin", "").strip()
+
+    result = db.execute(text("""
+        SELECT phone, name FROM customer_profiles
+        WHERE phone = :phone AND pin = :pin
+    """), {"phone": phone, "pin": pin}).fetchone()
+
+    if result:
+        return {"verified": True, "name": result[1]}
+    return {"verified": False}
+
+
+# ════════════════════════════════════
 # PRODUCT BARCODE SEARCH
 # ════════════════════════════════════
 
