@@ -50,7 +50,7 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
-    if request.url.path == "/" or request.method == "HEAD":
+    if request.url.path == "/" or request.url.path == "/privacy-policy" or request.method == "HEAD":
         return await call_next(request)
 
     provided_key = request.headers.get("x-api-key")
