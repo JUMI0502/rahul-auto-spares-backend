@@ -1798,6 +1798,106 @@ def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
 
 
 # ════════════════════════════════════
+# PRIVACY POLICY + ACCOUNT DELETION
+# ════════════════════════════════════
+
+from fastapi.responses import HTMLResponse
+
+PRIVACY_POLICY_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy - New Rahul Auto Spares</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #222; }
+  h1 { font-size: 24px; } h2 { font-size: 18px; margin-top: 28px; }
+  .updated { color: #666; font-size: 13px; margin-bottom: 30px; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy - New Rahul Auto Spares</h1>
+<p class="updated">Last updated: July 2026</p>
+
+<p>New Rahul Auto Spares ("we", "our", "the app") operates the New Rahul Auto Spares
+customer and store mobile applications. This page explains what information we collect,
+how we use it, and how you can control it.</p>
+
+<h2>Information We Collect</h2>
+<p>When you use the app, we collect: your name and phone number (to create your
+account), your order history and items purchased, your saved vehicle information
+(bike brand/model, if provided), your loyalty points balance, and cart contents
+(to help our staff assist you if you don't finish checking out).</p>
+
+<h2>How We Protect Your Information</h2>
+<p>Your account is protected by a 4-digit PIN that you set when you first sign up.
+Anyone accessing your account must know both your phone number and your PIN.</p>
+
+<h2>How We Use Your Information</h2>
+<p>We use your information to process your orders, track loyalty rewards, notify
+you about order status, and (with your permission via WhatsApp) send you service
+reminders or respond to support requests. We do not sell your information to
+third parties.</p>
+
+<h2>Third-Party Services</h2>
+<p>When you or our staff choose to contact each other via WhatsApp, that
+conversation is subject to WhatsApp's own privacy policy. We use Google Firebase
+for push notifications and Sentry for crash reporting, which may process
+technical device information (not your personal profile data) to help us fix bugs.</p>
+
+<h2>Data Retention</h2>
+<p>We retain your order history and account information as long as your account
+is active, to support warranty claims, order lookups, and loyalty tracking.</p>
+
+<h2>Deleting Your Account</h2>
+<p>You can delete your account and all associated data at any time from the
+app: go to Profile → Delete My Account. This permanently removes your name,
+phone number, PIN, and loyalty points from our systems. Your past order
+records may be retained in anonymized form for our internal business records
+(required for accounting purposes) but will no longer be linked to your name
+or phone number.</p>
+<p>You can also request deletion by contacting us directly at 08514-244944 or
+via WhatsApp at +91 6300281504.</p>
+
+<h2>Children's Privacy</h2>
+<p>This app is not directed at children under 13, and we do not knowingly
+collect information from children.</p>
+
+<h2>Contact Us</h2>
+<p>If you have questions about this privacy policy or your data, contact us at:</p>
+<p>New Rahul Auto Spares<br>
+Telugu Peta, Nandyal, Andhra Pradesh 518501<br>
+Phone: 08514-244944</p>
+</body>
+</html>
+"""
+
+@app.get("/privacy-policy", response_class=HTMLResponse)
+def privacy_policy():
+    return PRIVACY_POLICY_HTML
+
+
+@app.delete("/customers/{phone}/account")
+def delete_customer_account(phone: str, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("DELETE FROM customer_profiles WHERE phone = :phone"), {"phone": phone})
+        db.execute(text("DELETE FROM customer_loyalty_points WHERE phone = :phone"), {"phone": phone})
+        db.execute(text("DELETE FROM active_carts WHERE customer_phone = :phone"), {"phone": phone})
+        db.execute(text("DELETE FROM customer_tokens WHERE phone = :phone"), {"phone": phone})
+        # Anonymize past orders rather than deleting (needed for business/accounting records)
+        db.execute(text("""
+            UPDATE orders SET customer_name = 'Deleted User', customer_phone = NULL
+            WHERE customer_phone = :phone
+        """), {"phone": phone})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    return {"message": "Account deleted"}
+
+
+# ════════════════════════════════════
 # PRODUCT BARCODE SEARCH
 # ════════════════════════════════════
 
