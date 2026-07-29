@@ -26,6 +26,11 @@ sentry_sdk.init(
 
 app = FastAPI()
 
+
+@app.get("/sentry-debug")
+async def trigger_error():
+    division_by_zero = 1 / 0
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
