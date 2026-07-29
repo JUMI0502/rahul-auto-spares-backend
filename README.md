@@ -8,7 +8,7 @@ https://rahul-auto-spares-backend.onrender.com
 ```
 
 ## Authentication
-Every endpoint (except `GET /`) requires an API key header:
+Every endpoint (except `GET /` and `GET /privacy-policy`) requires an API key header:
 ```
 x-api-key: <see team lead for current key>
 ```
@@ -52,14 +52,33 @@ backup should be taken periodically (`pg_dump`).
 
 Test customer phone number used during development: `1122334455`
 
+**Customer accounts now require a 4-digit PIN** (set on first login). This is
+new — customers created before this feature will be prompted to create a PIN
+on their next login.
+
+## Feature Endpoints Added Since Initial Build
+- **Mechanic Approvals**: `/mechanics/*` — registration, approval, edit, delete
+- **OEM Classification**: `products.is_oem` field, `/products/{id}/oem`
+- **Service Reminders**: `/customers/service-due`, nudges customers 60+ days inactive
+- **Warranty & Returns**: `/warranty-claims/*` — log, track, resolve defect claims
+- **Referral Program**: built into `/orders` — first-order referrals earn bonus points automatically
+- **Business Health KPIs**: `/reports/business-health` — staff productivity, warranty rate, retention
+- **Abandoned Cart Recovery**: `/cart/save`, `/carts/abandoned` — tracks carts idle 3+ hours
+- **Inventory Forecasting**: `/products/forecast` — predicts days-until-stockout from sales velocity
+- **Customer PIN Verification**: `/customers/set-pin`, `/customers/verify-pin` — closes a real privacy gap (previously any phone number could access anyone's order history/points)
+- **Account Deletion**: `DELETE /customers/{phone}/account` — required for Play Store compliance
+- **Privacy Policy**: `GET /privacy-policy` — public HTML page, no API key needed
+
 ## Known Limitations
 - No automated tests yet
-- CORS is permissive (`allow_origins=["*"]`) — acceptable since mobile clients
-  don't send Origin headers, but worth restricting if a web client is ever added
+- CORS is permissive (`allow_origins=["*"]`) but `allow_credentials=False` —
+  acceptable since mobile clients don't send Origin headers
 - Product catalog's `is_oem` field defaults to `false` for all existing
   products until manually classified by staff via the store app
-- Debug/patch scripts (`add_*.py`, `fix_*.py`) may appear untracked locally —
-  these are development scratch files, safe to ignore, not part of the app
+- Delivery feature exists but is disabled (`DELIVERY_ENABLED = false` in
+  customer app) — business decision, not a bug
+- Debug/patch scripts (`add_*.py`, `fix_*.py`, `remove_*.py`) may appear
+  untracked locally — these are development scratch files, safe to ignore
 
 ## Reporting Bugs
 Please include: endpoint hit, request body sent, expected vs actual response,
