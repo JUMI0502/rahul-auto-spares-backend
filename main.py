@@ -16,6 +16,14 @@ SessionLocal = sessionmaker(
     autocommit=False, autoflush=False, bind=engine
 )
 
+import sentry_sdk
+
+sentry_sdk.init(
+    dsn="https://33f5816e1480278c558077d02cc67e8a@o4511731723534336.ingest.us.sentry.io/4511816756953088",
+    send_default_pii=True,
+    traces_sample_rate=0.5,
+)
+
 app = FastAPI()
 
 app.add_middleware(
@@ -1160,9 +1168,9 @@ def approve_mechanic(
 
             if token_row:
                 msg = (
-                    "🎉 Approved! You get 5% mechanic discount!"
+                    "Approved! You now have a mechanic trade account."
                     if status == "approved"
-                    else "❌ Your mechanic request was not approved."
+                    else "Your mechanic request was not approved."
                 )
                 http_requests.post(
                     "https://exp.host/--/api/v2/push/send",
@@ -1175,8 +1183,8 @@ def approve_mechanic(
                     headers={"Content-Type": "application/json"},
                     timeout=10
                 )
-    except:
-        pass
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
 
     return {"message": f"Mechanic {status}!"}
 @app.put("/staff/{staff_id}/pin")
