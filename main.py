@@ -180,7 +180,8 @@ def update_stock(
             "qc": new_qty - old_qty
         })
         db.commit()
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         db.rollback()
 
     return {"message": "Stock updated!", "new_qty": new_qty}
@@ -437,7 +438,8 @@ def create_order(
             """), {"phone": customer_phone, "points": NEW_CUSTOMER_BONUS})
             db.commit()
             referral_bonus_awarded = True
-        except Exception:
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
             db.rollback()
 
     return {
@@ -634,7 +636,8 @@ def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
         if result:
             return {"staff": dict(result._mapping)}
         return {"staff": None}
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return {"staff": None}
 
 @app.post("/staff/{staff_id}/clockin")
@@ -1030,7 +1033,8 @@ def register_mechanic(
                 headers={"Content-Type": "application/json"},
                 timeout=10
             )
-    except:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         pass
 
     return {
@@ -1387,7 +1391,8 @@ def get_service_due_customers(days: int = 60, db: Session = Depends(get_db)):
             )
         """))
         db.commit()
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         db.rollback()
 
     result = db.execute(text("""
@@ -1458,7 +1463,8 @@ def create_warranty_claim(data: dict, db: Session = Depends(get_db)):
             )
         """))
         db.commit()
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         db.rollback()
 
     result = db.execute(text("""
@@ -1555,7 +1561,8 @@ def get_business_health(db: Session = Depends(get_db)):
         claims_month = db.execute(text("""
             SELECT COUNT(*) FROM warranty_claims WHERE created_at > date_trunc('month', NOW())
         """)).fetchone()[0]
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         total_orders_month = 0
         claims_month = 0
     claim_rate = round((claims_month / total_orders_month) * 100, 1) if total_orders_month > 0 else 0
@@ -1613,7 +1620,8 @@ def save_cart(data: dict, db: Session = Depends(get_db)):
             )
         """))
         db.commit()
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         db.rollback()
 
     if not items:
@@ -1636,7 +1644,8 @@ def clear_cart(phone: str, db: Session = Depends(get_db)):
     try:
         db.execute(text("DELETE FROM active_carts WHERE customer_phone = :phone"), {"phone": phone})
         db.commit()
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         db.rollback()
     return {"message": "Cleared"}
 
@@ -1655,7 +1664,8 @@ def get_abandoned_carts(hours: int = 3, db: Session = Depends(get_db)):
             )
         """))
         db.commit()
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         db.rollback()
 
     result = db.execute(text("""
@@ -1669,7 +1679,8 @@ def get_abandoned_carts(hours: int = 3, db: Session = Depends(get_db)):
     for r in result:
         try:
             items = jsonlib.loads(r[2]) if r[2] else []
-        except Exception:
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
             items = []
         carts.append({
             "customer_phone": r[0],
@@ -1756,7 +1767,8 @@ def check_customer_has_pin(phone: str, db: Session = Depends(get_db)):
             )
         """))
         db.commit()
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         db.rollback()
 
     result = db.execute(text(
@@ -1981,7 +1993,8 @@ def broadcast_notification(
                 timeout=10
             )
             sent += len(batch)
-        except Exception:
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
             pass
 
     return {"sent": sent}
@@ -2196,7 +2209,8 @@ def get_all_offers(db: Session = Depends(get_db)):
         """)).fetchall()
         offers = [dict(r._mapping) for r in result]
         return {"offers": offers}
-    except:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return {"offers": []}
 
 @app.get("/offers")
@@ -2211,7 +2225,8 @@ def get_active_offers(db: Session = Depends(get_db)):
         """)).fetchall()
         offers = [dict(r._mapping) for r in result]
         return {"offers": offers}
-    except:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return {"offers": []}
 
 @app.post("/offers")
@@ -2298,7 +2313,8 @@ def get_rewards(db: Session = Depends(get_db)):
             FROM rewards WHERE is_active = true ORDER BY points_required ASC
         """)).fetchall()
         return {"rewards": [dict(r._mapping) for r in result]}
-    except:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return {"rewards": []}
 
 @app.post("/rewards")
@@ -2361,7 +2377,8 @@ def log_activity(db, staff_name: str, action: str, details: str = "", order_id: 
             "order_id": order_id
         })
         db.commit()
-    except:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         pass
 
 @app.get("/activity-log")
