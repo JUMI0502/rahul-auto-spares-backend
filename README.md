@@ -1,5 +1,5 @@
-xx## Before You Start
-ReXquest the following from the project owner before setup:
+## Before You Start
+Request the following from the project owner before setup:
 - `.env` file (DATABASE_URL, API_SECRET_KEY)
 - Confirm Python 3.x and pip installed
 
