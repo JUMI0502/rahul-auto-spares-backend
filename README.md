@@ -1,3 +1,15 @@
+## Before You Start
+Request the following from the project owner before setup:
+- `.env` file (DATABASE_URL, API_SECRET_KEY)
+- Confirm Python 3.x and pip installed
+
+## Note on Supabase Free Tier
+The database pauses after 7 days of inactivity. If the API seems unresponsive,
+check the Supabase dashboard and click "Resume."
+
+## Questions or Blockers
+Contact Amini Masthan Reddy (aminimasthanreddy@gmail.com) if setup fails or
+this README is outdated.
 # Rahul Auto Spares — Backend API
 
 FastAPI backend for the New Rahul Auto Spares customer and store apps.
