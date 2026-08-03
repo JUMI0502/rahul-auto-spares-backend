@@ -123,6 +123,17 @@ def check_pin(pin: str, stored: str) -> bool:
     # Legacy plaintext PIN - direct comparison for this one last check
     return pin == stored
 
+# One-time startup fix: staff_profiles.pin was originally VARCHAR(10),
+# which fits a 4-digit plaintext PIN but is far too narrow for a bcrypt
+# hash (~60 chars). Without this, every hash-migration write silently
+# fails with a truncation error, breaking staff login entirely.
+try:
+    with engine.connect() as _conn:
+        _conn.execute(text("ALTER TABLE staff_profiles ALTER COLUMN pin TYPE VARCHAR(100);"))
+        _conn.commit()
+except Exception as _e:
+    sentry_sdk.capture_exception(_e)
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     if request.url.path == "/" or request.url.path == "/privacy-policy" or request.method == "HEAD":
