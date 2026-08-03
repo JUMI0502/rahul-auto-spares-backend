@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
@@ -77,6 +77,29 @@ def record_pin_failure(key: str):
 
 def clear_pin_failures(key: str):
     _pin_failed_attempts[key] = []
+
+# Customer session tokens - issued after PIN verification, required for
+# any endpoint that returns/modifies data tied to a specific phone number.
+# Without this, anyone with the app's API key could access ANY customer's
+# order history, points, or delete their account just by knowing their phone.
+import secrets
+_customer_sessions = {}  # token -> {"phone": str, "expires_at": float}
+SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7  # 7 days
+
+def create_customer_session(phone: str) -> str:
+    token = secrets.token_urlsafe(32)
+    _customer_sessions[token] = {"phone": phone, "expires_at": time.time() + SESSION_DURATION_SECONDS}
+    return token
+
+def require_customer_session(phone: str, x_session_token: str = Header(None)):
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail="Session token required")
+    session = _customer_sessions.get(x_session_token)
+    if not session or session["expires_at"] < time.time():
+        raise HTTPException(status_code=401, detail="Session expired - please log in again")
+    if session["phone"] != phone:
+        raise HTTPException(status_code=403, detail="Session does not match requested account")
+    return True
 
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
@@ -247,7 +270,8 @@ def get_orders(db: Session = Depends(get_db)):
 @app.get("/orders/customer/{phone}")
 def get_customer_orders(
     phone: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(require_customer_session)
 ):
     result = db.execute(text("""
         SELECT id, custom_id, status,
@@ -1244,7 +1268,8 @@ def update_staff_pin(
 
 @app.get("/loyalty/{phone}")
 def get_loyalty_points(
-  phone: str, db: Session = Depends(get_db)
+  phone: str, db: Session = Depends(get_db),
+  _auth: bool = Depends(require_customer_session)
 ):
     result = db.execute(text("""
         SELECT points, total_earned, total_redeemed
@@ -1850,7 +1875,8 @@ def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
 
     if result:
         clear_pin_failures(lockout_key)
-        return {"verified": True, "name": result[1]}
+        token = create_customer_session(phone)
+        return {"verified": True, "name": result[1], "session_token": token}
     record_pin_failure(lockout_key)
     return {"verified": False}
 
@@ -1937,7 +1963,7 @@ def privacy_policy():
 
 
 @app.delete("/customers/{phone}/account")
-def delete_customer_account(phone: str, db: Session = Depends(get_db)):
+def delete_customer_account(phone: str, db: Session = Depends(get_db), _auth: bool = Depends(require_customer_session)):
     try:
         db.execute(text("DELETE FROM customer_profiles WHERE phone = :phone"), {"phone": phone})
         db.execute(text("DELETE FROM customer_loyalty_points WHERE phone = :phone"), {"phone": phone})
