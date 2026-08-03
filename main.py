@@ -101,6 +101,28 @@ def require_customer_session(phone: str, x_session_token: str = Header(None)):
         raise HTTPException(status_code=403, detail="Session does not match requested account")
     return True
 
+# PIN hashing - staff and customer PINs were previously stored as plain
+# text, meaning a database breach would expose every PIN immediately.
+# hash_pin() is used everywhere a PIN is written. check_pin() handles
+# verification and also transparently upgrades any legacy plaintext PIN
+# to a proper hash the moment it's next used successfully - no separate
+# migration script needed, existing accounts self-heal on next login.
+import bcrypt
+
+def hash_pin(pin: str) -> str:
+    return bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
+
+def check_pin(pin: str, stored: str) -> bool:
+    if not stored:
+        return False
+    if stored.startswith("$2b$") or stored.startswith("$2a$"):
+        try:
+            return bcrypt.checkpw(pin.encode(), stored.encode())
+        except Exception:
+            return False
+    # Legacy plaintext PIN - direct comparison for this one last check
+    return pin == stored
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     if request.url.path == "/" or request.url.path == "/privacy-policy" or request.method == "HEAD":
@@ -639,7 +661,7 @@ def add_staff(data: dict, db: Session = Depends(get_db)):
             "name": data.get("name"),
             "phone": data.get("phone", ""),
             "role": data.get("role", "staff"),
-            "pin": data.get("pin", "0000"),
+            "pin": hash_pin(data.get("pin", "0000")),
         })
         db.commit()
         row = result.fetchone()
@@ -655,7 +677,7 @@ def reset_staff_pin(staff_id: int, data: dict, db: Session = Depends(get_db)):
     try:
         db.execute(text(
             "UPDATE staff_profiles SET pin = :pin WHERE id = :id"
-        ), {"pin": str(new_pin), "id": staff_id})
+        ), {"pin": hash_pin(str(new_pin)), "id": staff_id})
         db.commit()
         return {"success": True}
     except Exception as e:
@@ -681,14 +703,21 @@ def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
     if wait:
         return {"staff": None, "locked": True, "retry_after_seconds": wait}
     try:
+        entered_pin = data.get("pin", "")
         result = db.execute(text("""
             SELECT id, name, role, phone, pin
             FROM staff_profiles
-            WHERE id = :staff_id AND pin = :pin AND is_active = true
-        """), {"staff_id": staff_id, "pin": data.get("pin")}).fetchone()
-        if result:
+            WHERE id = :staff_id AND is_active = true
+        """), {"staff_id": staff_id}).fetchone()
+        if result and check_pin(entered_pin, result[4]):
             clear_pin_failures(lockout_key)
-            return {"staff": dict(result._mapping)}
+            if not result[4].startswith("$2b$") and not result[4].startswith("$2a$"):
+                db.execute(text("UPDATE staff_profiles SET pin = :pin WHERE id = :id"),
+                           {"pin": hash_pin(entered_pin), "id": staff_id})
+                db.commit()
+            staff_dict = dict(result._mapping)
+            staff_dict.pop("pin", None)
+            return {"staff": staff_dict}
         record_pin_failure(lockout_key)
         return {"staff": None}
     except Exception as e:
@@ -1259,7 +1288,7 @@ def update_staff_pin(
     db.execute(text("""
         UPDATE staff_profiles
         SET pin = :pin WHERE id = :id
-    """), {"pin": new_pin, "id": staff_id})
+    """), {"pin": hash_pin(new_pin), "id": staff_id})
     db.commit()
     return {"message": "PIN updated successfully!"}
 # ════════════════════════════════════
@@ -1869,7 +1898,7 @@ def set_customer_pin(data: dict, db: Session = Depends(get_db)):
     db.execute(text("""
         INSERT INTO customer_profiles (phone, name, pin)
         VALUES (:phone, :name, :pin)
-    """), {"phone": phone, "name": name, "pin": pin})
+    """), {"phone": phone, "name": name, "pin": hash_pin(pin)})
     db.commit()
     return {"message": "PIN created!", "name": name}
 
@@ -1885,12 +1914,16 @@ def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
         return {"verified": False, "locked": True, "retry_after_seconds": wait}
 
     result = db.execute(text("""
-        SELECT phone, name FROM customer_profiles
-        WHERE phone = :phone AND pin = :pin
-    """), {"phone": phone, "pin": pin}).fetchone()
+        SELECT phone, name, pin FROM customer_profiles
+        WHERE phone = :phone
+    """), {"phone": phone}).fetchone()
 
-    if result:
+    if result and check_pin(pin, result[2]):
         clear_pin_failures(lockout_key)
+        if not result[2].startswith("$2b$") and not result[2].startswith("$2a$"):
+            db.execute(text("UPDATE customer_profiles SET pin = :pin WHERE phone = :phone"),
+                       {"pin": hash_pin(pin), "phone": phone})
+            db.commit()
         token = create_customer_session(phone)
         return {"verified": True, "name": result[1], "session_token": token}
     record_pin_failure(lockout_key)

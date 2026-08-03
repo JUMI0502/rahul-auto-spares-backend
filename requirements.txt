@@ -6,3 +6,4 @@ python-dotenv
 requests
 python-multipart
 sentry-sdk
+bcrypt
