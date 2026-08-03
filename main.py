@@ -56,6 +56,28 @@ _rate_limit_buckets = defaultdict(list)
 RATE_LIMIT_MAX_REQUESTS = 100
 RATE_LIMIT_WINDOW_SECONDS = 60
 
+# Per-account PIN lockout (separate from IP rate limiting above) -
+# stops brute-forcing one account's PIN even if under the general IP limit
+_pin_failed_attempts = defaultdict(list)
+PIN_MAX_FAILURES = 5
+PIN_LOCKOUT_SECONDS = 900  # 15 minutes
+
+def check_pin_lockout(key: str):
+    now = time.time()
+    attempts = _pin_failed_attempts[key]
+    while attempts and attempts[0] < now - PIN_LOCKOUT_SECONDS:
+        attempts.pop(0)
+    if len(attempts) >= PIN_MAX_FAILURES:
+        wait_seconds = int(PIN_LOCKOUT_SECONDS - (now - attempts[0]))
+        return max(wait_seconds, 1)
+    return None
+
+def record_pin_failure(key: str):
+    _pin_failed_attempts[key].append(time.time())
+
+def clear_pin_failures(key: str):
+    _pin_failed_attempts[key] = []
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     if request.url.path == "/" or request.url.path == "/privacy-policy" or request.method == "HEAD":
@@ -627,14 +649,21 @@ def delete_staff(staff_id: int, db: Session = Depends(get_db)):
 
 @app.post("/staff/verify-pin")
 def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
+    staff_id = data.get("staff_id")
+    lockout_key = f"staff:{staff_id}"
+    wait = check_pin_lockout(lockout_key)
+    if wait:
+        return {"staff": None, "locked": True, "retry_after_seconds": wait}
     try:
         result = db.execute(text("""
             SELECT id, name, role, phone, pin
             FROM staff_profiles
             WHERE id = :staff_id AND pin = :pin AND is_active = true
-        """), {"staff_id": data.get("staff_id"), "pin": data.get("pin")}).fetchone()
+        """), {"staff_id": staff_id, "pin": data.get("pin")}).fetchone()
         if result:
+            clear_pin_failures(lockout_key)
             return {"staff": dict(result._mapping)}
+        record_pin_failure(lockout_key)
         return {"staff": None}
     except Exception as e:
         sentry_sdk.capture_exception(e)
@@ -1806,6 +1835,11 @@ def set_customer_pin(data: dict, db: Session = Depends(get_db)):
 def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
     phone = data.get("phone", "").strip()
     pin = data.get("pin", "").strip()
+    lockout_key = f"customer:{phone}"
+
+    wait = check_pin_lockout(lockout_key)
+    if wait:
+        return {"verified": False, "locked": True, "retry_after_seconds": wait}
 
     result = db.execute(text("""
         SELECT phone, name FROM customer_profiles
@@ -1813,7 +1847,9 @@ def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
     """), {"phone": phone, "pin": pin}).fetchone()
 
     if result:
+        clear_pin_failures(lockout_key)
         return {"verified": True, "name": result[1]}
+    record_pin_failure(lockout_key)
     return {"verified": False}
 
 
