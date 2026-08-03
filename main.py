@@ -1822,6 +1822,11 @@ def check_customer_has_pin(phone: str, db: Session = Depends(get_db)):
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """))
+        # Safety net: an early version of this table was created before
+        # 'pin' existed in the CREATE TABLE statement above. Since
+        # CREATE TABLE IF NOT EXISTS is a no-op on existing tables, that
+        # column never got added - this ALTER TABLE self-heals it.
+        db.execute(text("ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS pin TEXT;"))
         db.commit()
     except Exception as e:
         sentry_sdk.capture_exception(e)
