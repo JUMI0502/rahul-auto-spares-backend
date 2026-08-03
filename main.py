@@ -531,8 +531,11 @@ def get_order_items(
 
 @app.get("/staff")
 def get_staff(db: Session = Depends(get_db)):
+    # SECURITY: never select/return the pin column here - this endpoint
+    # populates the staff-selection list and must not leak credentials.
+    # PIN verification happens exclusively via /staff/verify-pin.
     result = db.execute(text("""
-        SELECT id, name, role, phone, pin,
+        SELECT id, name, role, phone,
                is_clocked_in, total_hours_today
         FROM staff_profiles
         WHERE is_active = true
@@ -545,9 +548,8 @@ def get_staff(db: Session = Depends(get_db)):
             "name": row[1],
             "role": row[2],
             "phone": row[3],
-            "pin": row[4],
-            "is_clocked_in": row[5],
-            "total_hours_today": float(row[6] or 0)
+            "is_clocked_in": row[4],
+            "total_hours_today": float(row[5] or 0)
         })
     return {"staff": staff}
 
