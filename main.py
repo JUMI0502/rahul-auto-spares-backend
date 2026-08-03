@@ -1848,6 +1848,17 @@ def set_customer_pin(data: dict, db: Session = Depends(get_db)):
     if not phone or not name or len(pin) != 4 or not pin.isdigit():
         return {"error": "Valid phone, name, and 4-digit PIN required"}
 
+    # Self-healing safety net: fixes the case where this table was created
+    # before 'pin' existed in its definition (previous incident, see Sentry).
+    # Applied directly here since this endpoint is the one that actually
+    # needs the column, rather than relying on a different endpoint's setup.
+    try:
+        db.execute(text("ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS pin TEXT;"))
+        db.commit()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        db.rollback()
+
     existing = db.execute(text(
         "SELECT phone FROM customer_profiles WHERE phone = :phone"
     ), {"phone": phone}).fetchone()
