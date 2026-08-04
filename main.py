@@ -29,13 +29,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import warranty, service_reminders, mechanics, carts, forecast, business_health
+from routers import warranty, service_reminders, mechanics, carts, forecast, business_health, customer_list
 app.include_router(warranty.router)
 app.include_router(service_reminders.router)
 app.include_router(mechanics.router)
 app.include_router(carts.router)
 app.include_router(forecast.router)
 app.include_router(business_health.router)
+app.include_router(customer_list.router)
 
 # ════════════════════════════════════
 # HEALTH CHECK
@@ -74,28 +75,7 @@ def record_pin_failure(key: str):
 def clear_pin_failures(key: str):
     _pin_failed_attempts[key] = []
 
-# Customer session tokens - issued after PIN verification, required for
-# any endpoint that returns/modifies data tied to a specific phone number.
-# Without this, anyone with the app's API key could access ANY customer's
-# order history, points, or delete their account just by knowing their phone.
-import secrets
-_customer_sessions = {}  # token -> {"phone": str, "expires_at": float}
-SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7  # 7 days
-
-def create_customer_session(phone: str) -> str:
-    token = secrets.token_urlsafe(32)
-    _customer_sessions[token] = {"phone": phone, "expires_at": time.time() + SESSION_DURATION_SECONDS}
-    return token
-
-def require_customer_session(phone: str, x_session_token: str = Header(None)):
-    if not x_session_token:
-        raise HTTPException(status_code=401, detail="Session token required")
-    session = _customer_sessions.get(x_session_token)
-    if not session or session["expires_at"] < time.time():
-        raise HTTPException(status_code=401, detail="Session expired - please log in again")
-    if session["phone"] != phone:
-        raise HTTPException(status_code=403, detail="Session does not match requested account")
-    return True
+from auth import create_customer_session, require_customer_session
 
 # PIN hashing - staff and customer PINs were previously stored as plain
 # text, meaning a database breach would expose every PIN immediately.
@@ -1213,28 +1193,7 @@ def get_customer_analytics(
         "new_customers": new_customers[0] or 0
     }
 
-# ════════════════════════════════════
-# ALL CUSTOMERS (for broadcast)
-# ════════════════════════════════════
 
-@app.get("/customers/all")
-def get_all_customers(
-    db: Session = Depends(get_db)
-):
-    customers = db.execute(text("""
-        SELECT DISTINCT customer_name,
-               customer_phone
-        FROM orders
-        WHERE customer_phone IS NOT NULL
-        ORDER BY customer_name
-    """)).fetchall()
-    return {
-        "customers": [
-            {"name": r[0], "phone": r[1]}
-            for r in customers
-        ],
-        "count": len(customers)
-    }
 
 
 
