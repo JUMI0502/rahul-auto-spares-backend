@@ -7,14 +7,9 @@ from datetime import datetime, date
 import os
 from dotenv import load_dotenv
 import requests as http_requests
+from database import engine, SessionLocal, get_db
 
 load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(
-    autocommit=False, autoflush=False, bind=engine
-)
 
 import sentry_sdk
 
@@ -33,13 +28,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # ════════════════════════════════════
 # HEALTH CHECK
