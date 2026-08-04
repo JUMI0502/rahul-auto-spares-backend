@@ -29,10 +29,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import warranty, service_reminders, mechanics
+from routers import warranty, service_reminders, mechanics, carts, forecast, business_health
 app.include_router(warranty.router)
 app.include_router(service_reminders.router)
 app.include_router(mechanics.router)
+app.include_router(carts.router)
+app.include_router(forecast.router)
+app.include_router(business_health.router)
 
 # ════════════════════════════════════
 # HEALTH CHECK
@@ -1233,219 +1236,13 @@ def get_all_customers(
         "count": len(customers)
     }
 
-# ════════════════════════════════════
-# BUSINESS HEALTH (owner-only KPIs)
-# ════════════════════════════════════
-
-@app.get("/reports/business-health")
-def get_business_health(db: Session = Depends(get_db)):
-    # Staff productivity this month (private, owner-only - not a competitive leaderboard)
-    staff_rows = db.execute(text("""
-        SELECT collected_by, COUNT(*) as orders_completed
-        FROM orders
-        WHERE collected_by IS NOT NULL
-          AND created_at > date_trunc('month', NOW())
-        GROUP BY collected_by
-        ORDER BY orders_completed DESC
-    """)).fetchall()
-    staff_productivity = [{"name": r[0], "orders_completed": r[1]} for r in staff_rows]
-
-    # Warranty claim rate this month
-    try:
-        total_orders_month = db.execute(text("""
-            SELECT COUNT(*) FROM orders WHERE created_at > date_trunc('month', NOW())
-        """)).fetchone()[0]
-        claims_month = db.execute(text("""
-            SELECT COUNT(*) FROM warranty_claims WHERE created_at > date_trunc('month', NOW())
-        """)).fetchone()[0]
-    except Exception as e:
-        sentry_sdk.capture_exception(e)
-        total_orders_month = 0
-        claims_month = 0
-    claim_rate = round((claims_month / total_orders_month) * 100, 1) if total_orders_month > 0 else 0
-
-    # Customer retention: active (ordered in last 60 days) vs lapsed
-    total_customers = db.execute(text("""
-        SELECT COUNT(DISTINCT customer_phone) FROM orders WHERE customer_phone IS NOT NULL
-    """)).fetchone()[0]
-    active_customers = db.execute(text("""
-        SELECT COUNT(DISTINCT customer_phone) FROM orders
-        WHERE customer_phone IS NOT NULL
-          AND created_at > NOW() - INTERVAL '60 days'
-    """)).fetchone()[0]
-    lapsed_customers = total_customers - active_customers
-    retention_rate = round((active_customers / total_customers) * 100, 1) if total_customers > 0 else 0
-
-    return {
-        "staff_productivity": staff_productivity,
-        "warranty": {
-            "claims_this_month": claims_month,
-            "orders_this_month": total_orders_month,
-            "claim_rate_percent": claim_rate
-        },
-        "retention": {
-            "total_customers": total_customers,
-            "active_customers": active_customers,
-            "lapsed_customers": lapsed_customers,
-            "retention_rate_percent": retention_rate
-        }
-    }
 
 
-# ════════════════════════════════════
-# ABANDONED CART RECOVERY
-# ════════════════════════════════════
-
-@app.post("/cart/save")
-def save_cart(data: dict, db: Session = Depends(get_db)):
-    import json as jsonlib
-    phone = data.get("customer_phone", "").strip()
-    name = data.get("customer_name", "")
-    items = data.get("items", [])
-
-    if not phone:
-        return {"error": "Phone required"}
-
-    try:
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS active_carts (
-                customer_phone TEXT PRIMARY KEY,
-                customer_name TEXT,
-                items_json TEXT,
-                updated_at TIMESTAMP DEFAULT NOW(),
-                reminder_sent_at TIMESTAMP
-            )
-        """))
-        db.commit()
-    except Exception as e:
-        sentry_sdk.capture_exception(e)
-        db.rollback()
-
-    if not items:
-        db.execute(text("DELETE FROM active_carts WHERE customer_phone = :phone"), {"phone": phone})
-        db.commit()
-        return {"message": "Cart cleared"}
-
-    db.execute(text("""
-        INSERT INTO active_carts (customer_phone, customer_name, items_json, updated_at, reminder_sent_at)
-        VALUES (:phone, :name, :items, NOW(), NULL)
-        ON CONFLICT (customer_phone) DO UPDATE
-        SET customer_name = :name, items_json = :items, updated_at = NOW(), reminder_sent_at = NULL
-    """), {"phone": phone, "name": name, "items": jsonlib.dumps(items)})
-    db.commit()
-    return {"message": "Cart saved"}
 
 
-@app.delete("/cart/{phone}")
-def clear_cart(phone: str, db: Session = Depends(get_db)):
-    try:
-        db.execute(text("DELETE FROM active_carts WHERE customer_phone = :phone"), {"phone": phone})
-        db.commit()
-    except Exception as e:
-        sentry_sdk.capture_exception(e)
-        db.rollback()
-    return {"message": "Cleared"}
 
 
-@app.get("/carts/abandoned")
-def get_abandoned_carts(hours: int = 3, db: Session = Depends(get_db)):
-    import json as jsonlib
-    try:
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS active_carts (
-                customer_phone TEXT PRIMARY KEY,
-                customer_name TEXT,
-                items_json TEXT,
-                updated_at TIMESTAMP DEFAULT NOW(),
-                reminder_sent_at TIMESTAMP
-            )
-        """))
-        db.commit()
-    except Exception as e:
-        sentry_sdk.capture_exception(e)
-        db.rollback()
 
-    result = db.execute(text("""
-        SELECT customer_phone, customer_name, items_json, updated_at, reminder_sent_at
-        FROM active_carts
-        WHERE updated_at < NOW() - (:hours || ' hours')::interval
-        ORDER BY updated_at ASC
-    """), {"hours": hours}).fetchall()
-
-    carts = []
-    for r in result:
-        try:
-            items = jsonlib.loads(r[2]) if r[2] else []
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            items = []
-        carts.append({
-            "customer_phone": r[0],
-            "customer_name": r[1],
-            "items": items,
-            "item_count": len(items),
-            "updated_at": str(r[3]),
-            "reminder_sent": r[4] is not None
-        })
-    return {"abandoned_carts": carts, "count": len(carts)}
-
-
-@app.post("/carts/{phone}/reminder-sent")
-def mark_cart_reminder_sent(phone: str, db: Session = Depends(get_db)):
-    db.execute(text(
-        "UPDATE active_carts SET reminder_sent_at = NOW() WHERE customer_phone = :phone"
-    ), {"phone": phone})
-    db.commit()
-    return {"message": "Recorded"}
-
-
-# ════════════════════════════════════
-# INVENTORY FORECASTING
-# ════════════════════════════════════
-
-@app.get("/products/forecast")
-def get_inventory_forecast(days_threshold: int = 7, db: Session = Depends(get_db)):
-    result = db.execute(text("""
-        SELECT
-            p.id, p.name_en, p.sku, p.stock_qty,
-            COALESCE(SUM(oi.qty), 0) as sold_last_30_days
-        FROM products p
-        LEFT JOIN order_items oi ON p.id = oi.product_id
-        LEFT JOIN orders o ON oi.order_id = o.id
-            AND o.created_at > NOW() - INTERVAL '30 days'
-        GROUP BY p.id, p.name_en, p.sku, p.stock_qty
-    """)).fetchall()
-
-    forecasts = []
-    for row in result:
-        product_id, name, sku, stock_qty, sold_30d = row
-        avg_daily_rate = sold_30d / 30.0
-
-        if avg_daily_rate > 0:
-            days_remaining = round(stock_qty / avg_daily_rate, 1)
-        else:
-            days_remaining = None  # no recent sales data - can't forecast
-
-        at_risk = days_remaining is not None and days_remaining <= days_threshold
-
-        if at_risk or (avg_daily_rate > 0):
-            forecasts.append({
-                "product_id": product_id,
-                "name": name,
-                "sku": sku,
-                "stock_qty": stock_qty,
-                "sold_last_30_days": sold_30d,
-                "avg_daily_rate": round(avg_daily_rate, 2),
-                "days_remaining": days_remaining,
-                "at_risk": at_risk
-            })
-
-    forecasts.sort(key=lambda f: (f["days_remaining"] is None, f["days_remaining"]))
-
-    return {
-        "at_risk_count": sum(1 for f in forecasts if f["at_risk"]),
-        "forecasts": forecasts
-    }
 
 
 # ════════════════════════════════════
