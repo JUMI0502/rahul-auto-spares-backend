@@ -51,6 +51,28 @@ def create_warranty_claim(data: dict, db: Session = Depends(get_db)):
 
 @router.get("/warranty-claims")
 def get_warranty_claims(status: str = None, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS warranty_claims (
+                id SERIAL PRIMARY KEY,
+                order_id INTEGER,
+                product_name TEXT,
+                customer_name TEXT,
+                customer_phone TEXT,
+                issue_description TEXT,
+                status TEXT DEFAULT 'pending',
+                resolution_type TEXT,
+                resolution_notes TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                resolved_at TIMESTAMP,
+                resolved_by TEXT
+            )
+        """))
+        db.commit()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        db.rollback()
+
     query = "SELECT id, order_id, product_name, customer_name, customer_phone, issue_description, status, resolution_type, resolution_notes, created_at, resolved_at, resolved_by FROM warranty_claims"
     params = {}
     if status:
@@ -75,6 +97,28 @@ def get_warranty_claims(status: str = None, db: Session = Depends(get_db)):
 
 @router.put("/warranty-claims/{claim_id}")
 def update_warranty_claim(claim_id: int, data: dict, db: Session = Depends(get_db)):
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS warranty_claims (
+                id SERIAL PRIMARY KEY,
+                order_id INTEGER,
+                product_name TEXT,
+                customer_name TEXT,
+                customer_phone TEXT,
+                issue_description TEXT,
+                status TEXT DEFAULT 'pending',
+                resolution_type TEXT,
+                resolution_notes TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                resolved_at TIMESTAMP,
+                resolved_by TEXT
+            )
+        """))
+        db.commit()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        db.rollback()
+
     status = data.get("status", "pending")
     resolution_type = data.get("resolution_type")
     resolution_notes = data.get("resolution_notes", "")
