@@ -328,6 +328,35 @@ def get_customer_orders(
         })
     return {"orders": orders}
 
+
+@app.get("/staff/customers/{phone}/orders")
+def staff_get_customer_orders(phone: str, db: Session = Depends(get_db)):
+    """Staff-facing version of order lookup - used by the store app so
+    staff can help any customer, without requiring that customer's own
+    session token (which only makes sense for their self-service app)."""
+    result = db.execute(text("""
+        SELECT id, custom_id, status,
+               total_amount, pickup_time,
+               payment_type, created_at
+        FROM orders
+        WHERE customer_phone = :phone
+        ORDER BY created_at DESC
+        LIMIT 20
+    """), {"phone": phone})
+    orders = []
+    for row in result:
+        orders.append({
+            "id": row[0],
+            "custom_id": row[1],
+            "status": row[2],
+            "total_amount": float(row[3] or 0),
+            "pickup_time": row[4],
+            "payment_type": row[5],
+            "created_at": str(row[6])
+        })
+    return {"orders": orders}
+
+
 @app.post("/staff/{staff_id}/register-push-token")
 def register_push_token(staff_id: int, data: dict, db: Session = Depends(get_db)):
     token = data.get("push_token")
