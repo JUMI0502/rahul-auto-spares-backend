@@ -29,7 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import warranty, service_reminders, mechanics, carts, forecast, business_health, customer_list, loyalty
+from routers import warranty, service_reminders, mechanics, carts, forecast, business_health, customer_list, loyalty, customer_analytics
 app.include_router(warranty.router)
 app.include_router(service_reminders.router)
 app.include_router(mechanics.router)
@@ -38,6 +38,7 @@ app.include_router(forecast.router)
 app.include_router(business_health.router)
 app.include_router(customer_list.router)
 app.include_router(loyalty.router)
+app.include_router(customer_analytics.router)
 
 # ════════════════════════════════════
 # HEALTH CHECK
@@ -1048,82 +1049,7 @@ def update_staff_pin(
     db.commit()
     return {"message": "PIN updated successfully!"}
 
-# ════════════════════════════════════
-# CUSTOMER ANALYTICS
-# ════════════════════════════════════
 
-@app.get("/customers/analytics")
-def get_customer_analytics(
-    db: Session = Depends(get_db)
-):
-    # Top customers by spending
-    top_spenders = db.execute(text("""
-        SELECT customer_name, customer_phone,
-               COUNT(*) as order_count,
-               SUM(total_amount) as total_spent
-        FROM orders
-        WHERE status = 'collected'
-        GROUP BY customer_name, customer_phone
-        ORDER BY total_spent DESC
-        LIMIT 10
-    """)).fetchall()
-
-    # Top customers by orders
-    top_orderers = db.execute(text("""
-        SELECT customer_name, customer_phone,
-               COUNT(*) as order_count,
-               SUM(total_amount) as total_spent
-        FROM orders
-        GROUP BY customer_name, customer_phone
-        ORDER BY order_count DESC
-        LIMIT 10
-    """)).fetchall()
-
-    # This month stats
-    monthly = db.execute(text("""
-        SELECT
-            COUNT(DISTINCT customer_phone) as unique_customers,
-            COUNT(*) as total_orders,
-            COALESCE(SUM(total_amount), 0) as total_revenue
-        FROM orders
-        WHERE strftime('%Y-%m', created_at) =
-              strftime('%Y-%m', 'now')
-    """)).fetchone()
-
-    # New customers this month
-    new_customers = db.execute(text("""
-        SELECT COUNT(DISTINCT customer_phone)
-        FROM orders
-        WHERE strftime('%Y-%m', created_at) =
-              strftime('%Y-%m', 'now')
-        AND customer_phone NOT IN (
-            SELECT DISTINCT customer_phone FROM orders
-            WHERE created_at < strftime('%Y-%m', 'now')
-        )
-    """)).fetchone()
-
-    return {
-        "top_spenders": [
-            {
-                "name": r[0], "phone": r[1],
-                "order_count": r[2],
-                "total_spent": float(r[3] or 0)
-            } for r in top_spenders
-        ],
-        "top_orderers": [
-            {
-                "name": r[0], "phone": r[1],
-                "order_count": r[2],
-                "total_spent": float(r[3] or 0)
-            } for r in top_orderers
-        ],
-        "monthly": {
-            "unique_customers": monthly[0] or 0,
-            "total_orders": monthly[1] or 0,
-            "total_revenue": float(monthly[2] or 0)
-        },
-        "new_customers": new_customers[0] or 0
-    }
 
 
 
