@@ -29,7 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import warranty, service_reminders, mechanics, carts, forecast, business_health, customer_list, loyalty, customer_analytics
+from routers import warranty, service_reminders, mechanics, carts, forecast, business_health, customer_list, loyalty, customer_analytics, barcode
 app.include_router(warranty.router)
 app.include_router(service_reminders.router)
 app.include_router(mechanics.router)
@@ -39,6 +39,7 @@ app.include_router(business_health.router)
 app.include_router(customer_list.router)
 app.include_router(loyalty.router)
 app.include_router(customer_analytics.router)
+app.include_router(barcode.router)
 
 # ════════════════════════════════════
 # HEALTH CHECK
@@ -1272,40 +1273,7 @@ def delete_customer_account(phone: str, db: Session = Depends(get_db), _auth: bo
     return {"message": "Account deleted"}
 
 
-# ════════════════════════════════════
-# PRODUCT BARCODE SEARCH
-# ════════════════════════════════════
 
-@app.get("/products/barcode/{code}")
-def search_by_barcode(
-    code: str,
-    db: Session = Depends(get_db)
-):
-    product = db.execute(text("""
-        SELECT id, name_en, name_te, name_hi, sku, mrp, selling_price, stock_qty
-        FROM products
-        WHERE sku = :code
-        OR barcode = :code
-        LIMIT 1
-    """), {"code": code}).fetchone()
-
-    if not product:
-        # Try partial match
-        product = db.execute(text("""
-            SELECT id, name_en, name_te, name_hi, sku, mrp, selling_price, stock_qty
-            FROM products
-            WHERE sku LIKE :code
-            OR name_en LIKE :code
-            LIMIT 1
-        """), {"code": f"%{code}%"}).fetchone()
-
-    if not product:
-        return {"found": False, "product": None}
-
-    return {
-        "found": True,
-        "product": dict(product._mapping)
-    }
 
 # ════════════════════════════════════
 # PUSH NOTIFICATIONS
