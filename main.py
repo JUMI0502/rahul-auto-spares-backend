@@ -113,6 +113,20 @@ try:
 except Exception as _e:
     sentry_sdk.capture_exception(_e)
 
+# Performance: indexes on the columns queried most often across the app
+# (order history lookups, status filtering, date-range reports, SKU search).
+# CREATE INDEX IF NOT EXISTS is safe to run on every startup - a no-op
+# once the index already exists.
+try:
+    with engine.connect() as _conn:
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS idx_orders_customer_phone ON orders(customer_phone);"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);"))
+        _conn.commit()
+except Exception as _e:
+    sentry_sdk.capture_exception(_e)
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     if request.url.path == "/" or request.url.path == "/privacy-policy" or request.method == "HEAD":
