@@ -1187,6 +1187,101 @@ def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
     return {"verified": False}
 
 
+@app.post("/customers/profile")
+def save_customer_extended_profile(data: dict, db: Session = Depends(get_db)):
+    """Saves the customer's extended profile details (address, UPI ID,
+    etc.) entered in the app. Previously this endpoint didn't exist at
+    all, so the app silently failed to save these fields to the backend -
+    they only ever reached the customer's own phone's local storage."""
+    phone = data.get("phone", "").strip()
+    if not phone:
+        return {"error": "Phone is required"}
+
+    try:
+        db.execute(text("""
+            ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS email TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS address TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS city TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS pincode TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS upi_id TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE customer_profiles ADD COLUMN IF NOT EXISTS whatsapp TEXT;
+        """))
+        db.commit()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        db.rollback()
+
+    existing = db.execute(text(
+        "SELECT phone FROM customer_profiles WHERE phone = :phone"
+    ), {"phone": phone}).fetchone()
+
+    if not existing:
+        return {"error": "No account found for this phone - create a PIN first"}
+
+    db.execute(text("""
+        UPDATE customer_profiles
+        SET name = COALESCE(NULLIF(:name, ''), name),
+            email = :email,
+            address = :address,
+            city = :city,
+            pincode = :pincode,
+            upi_id = :upi_id,
+            whatsapp = :whatsapp
+        WHERE phone = :phone
+    """), {
+        "phone": phone,
+        "name": data.get("name", ""),
+        "email": data.get("email", ""),
+        "address": data.get("address", ""),
+        "city": data.get("city", ""),
+        "pincode": data.get("pincode", ""),
+        "upi_id": data.get("upi_id", ""),
+        "whatsapp": data.get("whatsapp", ""),
+    })
+    db.commit()
+    return {"message": "Profile saved!"}
+
+
+@app.get("/staff/customers/{phone}/profile")
+def staff_get_customer_extended_profile(phone: str, db: Session = Depends(get_db)):
+    """Staff-facing lookup of a customer's extended profile (address,
+    UPI ID, etc.) for use during checkout/payment. No customer session
+    required - this is for staff assisting a customer, same pattern as
+    the staff-facing order-history endpoint."""
+    try:
+        result = db.execute(text("""
+            SELECT name, email, address, city, pincode, upi_id, whatsapp
+            FROM customer_profiles WHERE phone = :phone
+        """), {"phone": phone}).fetchone()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return {"found": False}
+
+    if not result:
+        return {"found": False}
+
+    return {
+        "found": True,
+        "name": result[0],
+        "email": result[1],
+        "address": result[2],
+        "city": result[3],
+        "pincode": result[4],
+        "upi_id": result[5],
+        "whatsapp": result[6],
+    }
+
+
 # ════════════════════════════════════
 # PRIVACY POLICY + ACCOUNT DELETION
 # ════════════════════════════════════
