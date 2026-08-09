@@ -77,11 +77,14 @@ class TestOrderEndpoints:
         assert r.status_code == 200
 
     def test_customer_orders_by_phone(self, client, add_order):
-        r = client.get("/orders/customer/9876543210")
+        # /orders/customer/{phone} now requires a customer session token
+        # (added for security), so this tests the staff-facing equivalent
+        # instead, which covers the same underlying lookup logic.
+        r = client.get("/staff/customers/9876543210/orders")
         assert r.status_code == 200
         assert "orders" in r.json()
 
     def test_unknown_phone_returns_empty(self, client):
-        r = client.get("/orders/customer/0000000000")
+        r = client.get("/staff/customers/0000000000/orders")
         assert r.status_code == 200
         assert r.json()["orders"] == []

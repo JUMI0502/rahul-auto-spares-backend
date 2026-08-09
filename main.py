@@ -1537,7 +1537,7 @@ def get_daily_summary(
     )
 
     bestsellers = db.execute(text("""
-        SELECT p.name_en, SUM(oi.quantity) as qty
+        SELECT p.name_en, SUM(oi.qty) as qty
         FROM order_items oi
         JOIN products p ON p.id = oi.product_id
         JOIN orders o ON o.id = oi.order_id
