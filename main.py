@@ -157,14 +157,19 @@ def root():
 # ════════════════════════════════════
 
 @app.get("/products")
-def get_products(db: Session = Depends(get_db)):
-    result = db.execute(text("""
+def get_products(limit: int = None, offset: int = 0, db: Session = Depends(get_db)):
+    query = """
         SELECT id, name_en, name_te, name_hi,
                sku, mrp, selling_price,
                stock_qty, category_id, is_oem
         FROM products
         ORDER BY sku ASC
-    """))
+    """
+    params = {}
+    if limit is not None:
+        query += " LIMIT :limit OFFSET :offset"
+        params = {"limit": limit, "offset": offset}
+    result = db.execute(text(query), params)
     products = []
     for row in result:
         products.append({
@@ -262,8 +267,8 @@ def update_stock(
 # ════════════════════════════════════
 
 @app.get("/orders")
-def get_orders(db: Session = Depends(get_db)):
-    result = db.execute(text("""
+def get_orders(limit: int = None, offset: int = 0, db: Session = Depends(get_db)):
+    query = """
         SELECT
             o.id, o.custom_id, o.status,
             o.total_amount, o.pickup_time,
@@ -275,7 +280,12 @@ def get_orders(db: Session = Depends(get_db)):
         LEFT JOIN order_items oi ON o.id = oi.order_id
         GROUP BY o.id
         ORDER BY o.created_at DESC
-    """))
+    """
+    params = {}
+    if limit is not None:
+        query += " LIMIT :limit OFFSET :offset"
+        params = {"limit": limit, "offset": offset}
+    result = db.execute(text(query), params)
     orders = []
     for row in result:
         orders.append({
