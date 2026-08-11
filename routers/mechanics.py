@@ -84,9 +84,14 @@ def register_mechanic(
     db.commit()
 
     try:
+        # Fixed: was reading from push_tokens, a table the app never
+        # writes to (device tokens are registered into staff_push_tokens
+        # instead) - meaning this notification has likely never actually
+        # reached a device. Matches the pattern already used correctly
+        # by send_new_order_push in main.py.
         tokens = db.execute(text(
-            "SELECT DISTINCT token FROM push_tokens"
-            " WHERE token IS NOT NULL"
+            "SELECT DISTINCT push_token FROM staff_push_tokens"
+            " WHERE push_token IS NOT NULL"
         ))
         token_list = [row[0] for row in tokens]
         if token_list:

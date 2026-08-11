@@ -396,21 +396,37 @@ def send_new_order_push(custom_id: str, total_amount: float, db: Session):
         )).fetchall()
         if not tokens:
             return
+        token_values = [row[0] for row in tokens]
         messages = [{
-            "to": row[0],
+            "to": token,
             "sound": "default",
             "priority": "high",
             "title": "New Order!",
             "body": f"Order {custom_id} - Rs.{total_amount:.0f}",
             "data": {"custom_id": custom_id, "type": "new_order"},
             "channelId": "new-orders",
-        } for row in tokens]
+        } for token in token_values]
         resp = http_requests.post(
             "https://exp.host/--/api/v2/push/send",
             json=messages,
             headers={"Content-Type": "application/json"},
             timeout=5
         )
+        # Clean up tokens for uninstalled apps / no-longer-valid devices,
+        # so they stop accumulating and causing repeated failed sends.
+        try:
+            tickets = resp.json().get("data", [])
+            dead_tokens = [
+                token_values[i] for i, t in enumerate(tickets)
+                if t.get("details", {}).get("error") == "DeviceNotRegistered"
+            ]
+            if dead_tokens:
+                db.execute(text(
+                    "DELETE FROM staff_push_tokens WHERE push_token = ANY(:tokens)"
+                ), {"tokens": dead_tokens})
+                db.commit()
+        except Exception as cleanup_err:
+            sentry_sdk.capture_exception(cleanup_err)
     except Exception as e:
         pass
 
