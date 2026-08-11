@@ -584,11 +584,16 @@ def create_order(
 def update_order(
     order_id: int,
     data: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
+    # Previously had no auth check, and trusted a client-supplied staff_id
+    # for who "collected" the order - anyone could mark any order as
+    # paid/collected. Now requires a real staff session, and uses the
+    # session's own staff_id rather than trusting whatever the client sends.
     status = data.get("status")
     payment_type = data.get("payment_type")
-    staff_id = data.get("staff_id")
+    staff_id = _session["staff_id"]
 
     db.execute(text("""
         UPDATE orders
