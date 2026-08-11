@@ -109,6 +109,34 @@ def add_order(client):
     })
     return r.json()
 
+
+@pytest.fixture
+def staff_headers(client):
+    """A valid staff session token header, for endpoints that now
+    correctly require staff authentication (order updates, etc.)."""
+    import bcrypt
+    with engine.connect() as c:
+        c.execute(text(
+            "CREATE TABLE IF NOT EXISTS staff_profiles ("
+            "id SERIAL PRIMARY KEY, name TEXT, phone TEXT, role TEXT, "
+            "is_active BOOLEAN DEFAULT true, pin TEXT"
+            ") " if USING_POSTGRES else
+            "CREATE TABLE IF NOT EXISTS staff_profiles ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, phone TEXT, "
+            "role TEXT, is_active BOOLEAN DEFAULT 1, pin TEXT)"
+        ))
+        hashed = bcrypt.hashpw(b"1234", bcrypt.gensalt()).decode()
+        result = c.execute(text(
+            "INSERT INTO staff_profiles (name, phone, role, is_active, pin) "
+            "VALUES ('Test Owner', '9000000000', 'owner', true, :pin) RETURNING id"
+        ), {"pin": hashed})
+        staff_id = result.fetchone()[0]
+        c.commit()
+
+    r = client.post("/staff/verify-pin", json={"staff_id": staff_id, "pin": "1234"})
+    token = r.json()["session_token"]
+    return {"x-staff-session-token": token}
+
 def pytest_sessionfinish(session, exitstatus):
     if not USING_POSTGRES:
         try: os.remove("test_rahul.db")

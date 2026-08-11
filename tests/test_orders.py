@@ -45,35 +45,35 @@ class TestOrderEndpoints:
         orders = r.json()["orders"]
         assert float(orders[0]["total_amount"]) == 450.0
 
-    def test_update_order_to_packing(self, client, add_order):
+    def test_update_order_to_packing(self, client, add_order, staff_headers):
         order_id = add_order.get("id", 1)
         r = client.put(f"/orders/{order_id}", json={
             "status": "packing", "collected_by": "Staff"
-        })
+        }, headers=staff_headers)
         assert r.status_code == 200
 
-    def test_update_order_to_ready(self, client, add_order):
+    def test_update_order_to_ready(self, client, add_order, staff_headers):
         order_id = add_order.get("id", 1)
         r = client.put(f"/orders/{order_id}", json={
             "status": "ready", "collected_by": "Staff"
-        })
+        }, headers=staff_headers)
         assert r.status_code == 200
 
-    def test_update_order_to_collected(self, client, add_order):
+    def test_update_order_to_collected(self, client, add_order, staff_headers):
         order_id = add_order.get("id", 1)
         r = client.put(f"/orders/{order_id}", json={
             "status": "collected", "collected_by": "Owner"
-        })
+        }, headers=staff_headers)
         assert r.status_code == 200
 
-    def test_update_payment_cash(self, client, add_order):
+    def test_update_payment_cash(self, client, add_order, staff_headers):
         order_id = add_order.get("id", 1)
-        r = client.put(f"/orders/{order_id}", json={"payment_type": "cash"})
+        r = client.put(f"/orders/{order_id}", json={"payment_type": "cash"}, headers=staff_headers)
         assert r.status_code == 200
 
-    def test_update_payment_upi(self, client, add_order):
+    def test_update_payment_upi(self, client, add_order, staff_headers):
         order_id = add_order.get("id", 1)
-        r = client.put(f"/orders/{order_id}", json={"payment_type": "upi"})
+        r = client.put(f"/orders/{order_id}", json={"payment_type": "upi"}, headers=staff_headers)
         assert r.status_code == 200
 
     def test_customer_orders_by_phone(self, client, add_order):
