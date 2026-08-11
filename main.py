@@ -1159,12 +1159,15 @@ def check_customer_has_pin(phone: str, db: Session = Depends(get_db)):
 
 
 @app.post("/customers/{phone}/reset-pin")
-def reset_customer_pin(phone: str, db: Session = Depends(get_db)):
+def reset_customer_pin(phone: str, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     """Staff-initiated PIN reset for customers who forgot their PIN and
     don't have WhatsApp (no automated recovery exists otherwise). Clears
     the PIN so the customer's next login naturally shows the 'create PIN'
     flow rather than 'enter PIN'. Called from the store app after a staff
-    member has verified the customer's identity in person or by phone."""
+    member has verified the customer's identity in person or by phone.
+    Previously had NO auth check - combined with set-pin (which lets
+    anyone claim a phone number once no PIN exists), this was a complete
+    account-takeover chain reachable by anyone with just the API key."""
     result = db.execute(text(
         "UPDATE customer_profiles SET pin = NULL WHERE phone = :phone RETURNING phone"
     ), {"phone": phone}).fetchone()
