@@ -15,7 +15,7 @@ import sentry_sdk
 
 sentry_sdk.init(
     dsn="https://33f5816e1480278c558077d02cc67e8a@o4511731723534336.ingest.us.sentry.io/4511816756953088",
-    send_default_pii=True,
+    send_default_pii=False,  # avoid sending customer phone numbers/personal data to Sentry
     traces_sample_rate=0.5,
 )
 
@@ -82,7 +82,7 @@ def record_pin_failure(key: str):
 def clear_pin_failures(key: str):
     _pin_failed_attempts[key] = []
 
-from auth import create_customer_session, require_customer_session, create_staff_session, get_staff_session
+from auth import create_customer_session, require_customer_session, check_customer_session, create_staff_session, get_staff_session
 
 # PIN hashing - staff and customer PINs were previously stored as plain
 # text, meaning a database breach would expose every PIN immediately.
@@ -714,7 +714,13 @@ def reset_staff_hours(staff_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/staff")
-def add_staff(data: dict, db: Session = Depends(get_db)):
+def add_staff(data: dict, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
+    # Previously anyone with the shared API key could create a new staff
+    # account with ANY role, including 'owner' - a critical privilege
+    # escalation gap. Only an existing owner/senior may add new staff.
+    if _session["role"] not in ("owner", "senior"):
+        raise HTTPException(status_code=403, detail="Only a manager can add new staff")
+
     try:
         result = db.execute(text("""
             INSERT INTO staff_profiles (name, phone, role, pin, is_active)
@@ -1231,14 +1237,18 @@ def verify_customer_pin(data: dict, db: Session = Depends(get_db)):
 
 
 @app.post("/customers/profile")
-def save_customer_extended_profile(data: dict, db: Session = Depends(get_db)):
+def save_customer_extended_profile(data: dict, x_session_token: str = Header(None), db: Session = Depends(get_db)):
     """Saves the customer's extended profile details (address, UPI ID,
     etc.) entered in the app. Previously this endpoint didn't exist at
     all, so the app silently failed to save these fields to the backend -
-    they only ever reached the customer's own phone's local storage."""
+    they only ever reached the customer's own phone's local storage.
+    Also previously had NO auth check at all - anyone with the API key
+    could overwrite any customer's profile just by knowing their phone."""
     phone = data.get("phone", "").strip()
     if not phone:
         return {"error": "Phone is required"}
+    if not check_customer_session(phone, x_session_token):
+        raise HTTPException(status_code=401, detail="Session token required")
 
     try:
         db.execute(text("""

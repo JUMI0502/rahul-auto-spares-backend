@@ -27,6 +27,20 @@ def require_customer_session(phone: str, x_session_token: str = Header(None)):
     return True
 
 
+def check_customer_session(phone: str, token: str) -> bool:
+    """Manual (non-Depends) version of require_customer_session, for
+    endpoints where phone comes from the request body rather than a URL
+    path parameter - FastAPI's automatic dependency binding only works
+    when the name matches a path param, so those routes need to check
+    this by hand instead."""
+    if not token:
+        return False
+    session = _customer_sessions.get(token)
+    if not session or session["expires_at"] < time.time():
+        return False
+    return session["phone"] == phone
+
+
 # Staff session tokens - issued after PIN verification, same pattern as
 # customer sessions above. Without this, any staff member's PIN could be
 # changed or reset by anyone with the shared API key, just by knowing
