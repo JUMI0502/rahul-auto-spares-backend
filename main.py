@@ -21,11 +21,15 @@ sentry_sdk.init(
 
 app = FastAPI()
 
+# CORS: origins stay open since this API has no web frontend - every
+# request (browser or otherwise) requires the x-api-key header regardless
+# of origin, which is the actual access control here, not CORS. Methods
+# are restricted to what the apps genuinely use, as basic hardening.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
