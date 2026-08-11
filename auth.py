@@ -25,3 +25,27 @@ def require_customer_session(phone: str, x_session_token: str = Header(None)):
     if session["phone"] != phone:
         raise HTTPException(status_code=403, detail="Session does not match requested account")
     return True
+
+
+# Staff session tokens - issued after PIN verification, same pattern as
+# customer sessions above. Without this, any staff member's PIN could be
+# changed or reset by anyone with the shared API key, just by knowing
+# their staff_id - no proof of identity or authority required.
+_staff_sessions = {}  # token -> {"staff_id": int, "role": str, "expires_at": float}
+
+
+def create_staff_session(staff_id: int, role: str) -> str:
+    token = secrets.token_urlsafe(32)
+    _staff_sessions[token] = {"staff_id": staff_id, "role": role, "expires_at": time.time() + SESSION_DURATION_SECONDS}
+    return token
+
+
+def get_staff_session(x_staff_session_token: str = Header(None)):
+    """Returns the caller's {staff_id, role} for endpoints that need to
+    know WHO is calling, not just whether they have the shared API key."""
+    if not x_staff_session_token:
+        raise HTTPException(status_code=401, detail="Staff session token required")
+    session = _staff_sessions.get(x_staff_session_token)
+    if not session or session["expires_at"] < time.time():
+        raise HTTPException(status_code=401, detail="Session expired - please log in again")
+    return session

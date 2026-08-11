@@ -78,7 +78,7 @@ def record_pin_failure(key: str):
 def clear_pin_failures(key: str):
     _pin_failed_attempts[key] = []
 
-from auth import create_customer_session, require_customer_session
+from auth import create_customer_session, require_customer_session, create_staff_session, get_staff_session
 
 # PIN hashing - staff and customer PINs were previously stored as plain
 # text, meaning a database breach would expose every PIN immediately.
@@ -713,7 +713,13 @@ def add_staff(data: dict, db: Session = Depends(get_db)):
         return {"error": str(e)}
 
 @app.post("/staff/{staff_id}/reset-pin")
-def reset_staff_pin(staff_id: int, data: dict, db: Session = Depends(get_db)):
+def reset_staff_pin(staff_id: int, data: dict, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
+    # Manager-assisted reset for a staff member who forgot their PIN -
+    # only owner/senior roles may reset someone else's PIN, and only
+    # when authenticated with their own valid session.
+    if _session["role"] not in ("owner", "senior"):
+        raise HTTPException(status_code=403, detail="Only a manager can reset another staff member's PIN")
+
     new_pin = data.get("pin")
     if not new_pin or len(str(new_pin)) != 4:
         return {"error": "A valid 4-digit PIN is required"}
@@ -760,7 +766,8 @@ def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
                 db.commit()
             staff_dict = dict(result._mapping)
             staff_dict.pop("pin", None)
-            return {"staff": staff_dict}
+            token = create_staff_session(result[0], result[2])
+            return {"staff": staff_dict, "session_token": token}
         record_pin_failure(lockout_key)
         return {"staff": None}
     except Exception as e:
@@ -1061,8 +1068,14 @@ def notify_order_ready(
 def update_staff_pin(
     staff_id: int,
     data: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
+    # Self-service PIN change - can only change your own PIN, proven by
+    # holding a valid session issued from your own successful PIN login.
+    if _session["staff_id"] != staff_id:
+        raise HTTPException(status_code=403, detail="You can only change your own PIN")
+
     new_pin = data.get("pin")
     if not new_pin or len(new_pin) != 4:
         return {"error": "PIN must be 4 digits"}
