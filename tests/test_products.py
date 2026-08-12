@@ -13,14 +13,14 @@ class TestProductEndpoints:
         assert "products" in data
         assert isinstance(data["products"], list)
 
-    def test_add_product_success(self, client):
+    def test_add_product_success(self, client, staff_headers):
         r = client.post("/products", json={
             "name_en": "Honda CB Shine Air Filter",
             "sku": "HND-CBS-001",
             "mrp": 180.0,
             "selling_price": 150.0,
             "stock_qty": 10
-        })
+        }, headers=staff_headers)
         assert r.status_code == 200
 
     def test_add_product_appears_in_list(self, client, add_product):
@@ -28,27 +28,27 @@ class TestProductEndpoints:
         skus = [p["sku"] for p in r.json()["products"]]
         assert "HRO-SPL-001" in skus
 
-    def test_add_product_missing_name_fails(self, client):
+    def test_add_product_missing_name_fails(self, client, staff_headers):
         r = client.post("/products", json={
             "sku": "BAD-001", "mrp": 100.0, "selling_price": 80.0
-        })
+        }, headers=staff_headers)
         data = r.json()
         assert "error" in data or r.status_code in [400, 422]
 
-    def test_add_product_missing_mrp_fails(self, client):
+    def test_add_product_missing_mrp_fails(self, client, staff_headers):
         r = client.post("/products", json={
             "name_en": "Test", "sku": "BAD-002", "selling_price": 80.0
-        })
+        }, headers=staff_headers)
         data = r.json()
         assert "error" in data or r.status_code in [400, 422]
 
-    def test_duplicate_sku_returns_error(self, client, add_product):
+    def test_duplicate_sku_returns_error(self, client, add_product, staff_headers):
         r = client.post("/products", json={
             "name_en": "Duplicate",
             "sku": "HRO-SPL-001",
             "mrp": 100.0,
             "selling_price": 80.0
-        })
+        }, headers=staff_headers)
         assert "error" in r.json()
 
     def test_product_has_correct_price(self, client, add_product):

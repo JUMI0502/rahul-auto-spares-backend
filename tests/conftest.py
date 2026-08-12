@@ -88,14 +88,14 @@ def client():
         yield c
 
 @pytest.fixture
-def add_product(client):
+def add_product(client, staff_headers):
     r = client.post("/products", json={
         "name_en": "Hero Splendor Brake Shoe",
         "sku": "HRO-SPL-001",
         "mrp": 250.0,
         "selling_price": 210.0,
         "stock_qty": 15
-    })
+    }, headers=staff_headers)
     return r.json()
 
 @pytest.fixture
