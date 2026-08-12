@@ -697,7 +697,13 @@ def get_staff_profile(staff_id: int, db: Session = Depends(get_db)):
     }
 
 @app.put("/staff/{staff_id}/profile")
-def update_staff_profile(staff_id: int, data: dict, db: Session = Depends(get_db)):
+def update_staff_profile(staff_id: int, data: dict, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
+    # Self-service - can only edit your own profile. Also note: this
+    # allows changing 'role', so restricting to self prevents someone
+    # editing a DIFFERENT staff member's role, while still letting the
+    # existing add_staff/reset flows (manager-only) handle real role changes.
+    if _session["staff_id"] != staff_id:
+        raise HTTPException(status_code=403, detail="You can only edit your own profile")
     db.execute(text("""
         UPDATE staff_profiles
         SET name = COALESCE(:name, name),
@@ -818,8 +824,11 @@ def verify_staff_pin(data: dict, db: Session = Depends(get_db)):
 @app.post("/staff/{staff_id}/clockin")
 def clock_in(
     staff_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
+    if _session["staff_id"] != staff_id:
+        raise HTTPException(status_code=403, detail="You can only clock yourself in")
     db.execute(text("""
         UPDATE staff_profiles
         SET is_clocked_in = TRUE,
@@ -837,8 +846,11 @@ def clock_in(
 @app.post("/staff/{staff_id}/clockout")
 def clock_out(
     staff_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
+    if _session["staff_id"] != staff_id:
+        raise HTTPException(status_code=403, detail="You can only clock yourself out")
     result = db.execute(text("""
         SELECT clock_in_time FROM staff_profiles
         WHERE id = :id
