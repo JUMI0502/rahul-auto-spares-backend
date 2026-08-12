@@ -1733,7 +1733,7 @@ def get_active_offers(db: Session = Depends(get_db)):
         return {"offers": []}
 
 @app.post("/offers")
-def create_offer(data: dict, db: Session = Depends(get_db)):
+def create_offer(data: dict, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     try:
         title = data.get("title", "").strip()
         description = data.get("description", "").strip()
@@ -1756,7 +1756,7 @@ def create_offer(data: dict, db: Session = Depends(get_db)):
         return {"error": str(e)}
 
 @app.put("/offers/{offer_id}/toggle")
-def toggle_offer(offer_id: int, db: Session = Depends(get_db)):
+def toggle_offer(offer_id: int, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     try:
         db.execute(text("""
             UPDATE offers SET is_active = NOT is_active WHERE id = :id
@@ -1767,7 +1767,7 @@ def toggle_offer(offer_id: int, db: Session = Depends(get_db)):
         return {"error": str(e)}
 
 @app.delete("/offers/{offer_id}")
-def delete_offer(offer_id: int, db: Session = Depends(get_db)):
+def delete_offer(offer_id: int, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     try:
         db.execute(text("DELETE FROM offers WHERE id = :id"), {"id": offer_id})
         db.commit()
