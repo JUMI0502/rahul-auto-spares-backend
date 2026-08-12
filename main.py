@@ -771,7 +771,11 @@ def reset_staff_pin(staff_id: int, data: dict, db: Session = Depends(get_db), _s
 
 
 @app.delete("/staff/{staff_id}")
-def delete_staff(staff_id: int, db: Session = Depends(get_db)):
+def delete_staff(staff_id: int, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
+    # Previously had no auth check - anyone with the API key could
+    # deactivate any staff account. Only a manager can deactivate staff.
+    if _session["role"] not in ("owner", "senior"):
+        raise HTTPException(status_code=403, detail="Only a manager can deactivate staff")
     try:
         db.execute(text("""
             UPDATE staff_profiles SET is_active = false WHERE id = :id
