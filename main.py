@@ -1821,7 +1821,7 @@ def get_rewards(db: Session = Depends(get_db)):
         return {"rewards": []}
 
 @app.post("/rewards")
-def add_reward(data: dict, db: Session = Depends(get_db)):
+def add_reward(data: dict, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     try:
         result = db.execute(text("""
             INSERT INTO rewards (name, description, points_required, is_active)
@@ -1839,7 +1839,7 @@ def add_reward(data: dict, db: Session = Depends(get_db)):
         return {"error": str(e)}
 
 @app.delete("/rewards/{reward_id}")
-def delete_reward(reward_id: int, db: Session = Depends(get_db)):
+def delete_reward(reward_id: int, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     try:
         db.execute(text("UPDATE rewards SET is_active = false WHERE id = :id"), {"id": reward_id})
         db.commit()
