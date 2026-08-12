@@ -1844,7 +1844,9 @@ def delete_reward(reward_id: int, db: Session = Depends(get_db)):
         return {"error": str(e)}
 
 @app.post("/loyalty/{phone}/redeem-reward")
-def redeem_reward(phone: str, data: dict, db: Session = Depends(get_db)):
+def redeem_reward(phone: str, data: dict, db: Session = Depends(get_db), _auth: bool = Depends(require_customer_session)):
+    # Previously had no auth check - anyone with the API key could redeem
+    # any customer's loyalty points for a reward just by knowing their phone.
     try:
         reward_id = data.get("reward_id")
         points = data.get("points", 0)
