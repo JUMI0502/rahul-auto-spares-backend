@@ -218,8 +218,11 @@ def get_low_stock(db: Session = Depends(get_db)):
 def update_price(
     product_id: int,
     update: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
+    # Previously had no auth check - anyone with the API key could
+    # silently change any product's price.
     new_price = update.get("selling_price", 0)
     db.execute(text("""
         UPDATE products
@@ -233,8 +236,11 @@ def update_price(
 def update_stock(
     product_id: int,
     update: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
+    # Previously had no auth check - anyone with the API key could
+    # silently change any product's stock count.
     new_qty = update.get("stock_qty", 0)
 
     old_row = db.execute(text(
