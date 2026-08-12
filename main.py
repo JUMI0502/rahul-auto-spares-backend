@@ -1522,7 +1522,8 @@ def broadcast_notification(
 @app.post("/products")
 def add_product(
     data: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
     name_en = data.get("name_en", "").strip()
     name_te = data.get("name_te", "").strip()
@@ -1557,7 +1558,7 @@ def add_product(
 
 
 @app.put("/products/{product_id}/oem")
-def update_oem_status(product_id: int, data: dict, db: Session = Depends(get_db)):
+def update_oem_status(product_id: int, data: dict, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     is_oem = bool(data.get("is_oem", False))
     db.execute(text("""
         UPDATE products SET is_oem = :is_oem WHERE id = :id
@@ -1676,7 +1677,7 @@ async def save_customer_push_token(phone: str, request: Request, db=Depends(get_
 
 # ── PRODUCT IMAGE UPLOAD ──
 @app.post("/products/{product_id}/upload-image")
-async def upload_product_image(product_id: int, request: Request, db=Depends(get_db)):
+async def upload_product_image(product_id: int, request: Request, db=Depends(get_db), _session: dict = Depends(get_staff_session)):
     try:
         body = await request.json()
         image_b64 = body.get("image_base64", "")
