@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 import sentry_sdk
 
 from database import get_db
+from auth import get_staff_session
 
 router = APIRouter()
 
@@ -96,7 +97,7 @@ def get_warranty_claims(status: str = None, db: Session = Depends(get_db)):
 
 
 @router.put("/warranty-claims/{claim_id}")
-def update_warranty_claim(claim_id: int, data: dict, db: Session = Depends(get_db)):
+def update_warranty_claim(claim_id: int, data: dict, db: Session = Depends(get_db), _session: dict = Depends(get_staff_session)):
     try:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS warranty_claims (
