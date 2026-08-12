@@ -214,8 +214,11 @@ def delete_mechanic(mechanic_id: int, db: Session = Depends(get_db)):
 def approve_mechanic(
     mechanic_id: int,
     data: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _session: dict = Depends(get_staff_session)
 ):
+    # Previously had no auth check - anyone with the API key could grant
+    # themselves (or anyone) mechanic trade pricing.
     status = data.get("status", "approved")
     approved_by = data.get("approved_by")
     notes = data.get("notes", "")
