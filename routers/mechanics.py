@@ -5,6 +5,7 @@ import sentry_sdk
 import requests as http_requests
 
 from database import get_db
+from auth import get_staff_session
 
 router = APIRouter()
 
